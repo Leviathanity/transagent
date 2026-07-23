@@ -4,6 +4,7 @@
 import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { readFile } from "node:fs/promises";
 import type { PipelineConfig } from "../src/types/pipeline.js";
+import { detectDirection } from "../src/utils/direction-detector.js";
 
 const args = process.argv.slice(2);
 
@@ -65,9 +66,7 @@ if (values.direction === "zh2en" || values.direction === "en2zh") {
   direction = values.direction;
 } else {
   const content = await readFile(inputPath, "utf-8").catch(() => "");
-  const sample = content.slice(0, 500);
-  const cjkCount = (sample.match(/[\u4e00-\u9fff\u3400-\u4dbf]/g) || []).length;
-  direction = cjkCount / Math.max(sample.length, 1) > 0.3 ? "zh2en" : "en2zh";
+  direction = detectDirection(content.slice(0, 500));
   console.log(`Auto-detected direction: ${direction}`);
 }
 
