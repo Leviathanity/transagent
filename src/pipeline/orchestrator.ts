@@ -26,7 +26,7 @@ export async function runPipeline(config: PipelineConfig): Promise<void> {
   if (!r2.success) { console.error(`Review failed: ${r2.error}`); process.exit(1); }
 
   console.log("[3/5] Translating...");
-  const r3 = await stageTranslate(config.glossaryPath, config.direction, config.concurrency, config.workDir);
+  const r3 = await stageTranslate(config.glossaryPath, config.direction, config.concurrency, config.translateModel, config.workDir);
   if (!r3.success) { console.error(`Translation failed: ${r3.error}`); process.exit(1); }
 
   console.log("[4/5] Reviewing formatting...");
