@@ -2,23 +2,51 @@
 // bin/ptl.ts
 
 import { runPipeline } from "../src/pipeline/orchestrator.js";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, unlink } from "node:fs/promises";
 import type { PipelineConfig } from "../src/types/pipeline.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
 
 const args = process.argv.slice(2);
 
 if (args[0] === "check") {
-  console.log("Checking environment...");
+  console.log("pdf-translator environment check\n");
+
+  console.log(`Bun:       v${Bun.version}`);
+  console.log(`Node:      ${process.version}`);
+
   try {
     const { execa } = await import("execa");
-    const r = await execa("markitdown", ["--version"], { timeout: 10000 });
-    console.log(`MarkItDown: ${r.stdout.trim()}`);
+    const r = await execa("markitdown", ["--version"], { timeout: 10000, reject: false });
+    if (r.exitCode === 0 && r.stdout.trim()) {
+      console.log(`MarkItDown: ${r.stdout.trim()}`);
+    } else {
+      console.log(`MarkItDown: NOT FOUND — run: pip install 'markitdown[all]'`);
+    }
   } catch {
-    console.error("MarkItDown: NOT FOUND — run: pip install 'markitdown[all]'");
+    console.log(`MarkItDown: NOT FOUND — run: pip install 'markitdown[all]'`);
   }
-  console.log(`Bun: ${Bun.version}`);
-  console.log(`DeepSeek API Key: ${Bun.env.DEEPSEEK_API_KEY ? "SET" : "NOT SET"}`);
+
+  try {
+    const { execa } = await import("execa");
+    const r = await execa("python", ["--version"], { timeout: 5000, reject: false });
+    console.log(`Python:    ${r.stdout.trim() || r.stderr.trim()}`);
+  } catch {
+    console.log(`Python:    NOT FOUND`);
+  }
+
+  const key = Bun.env.DEEPSEEK_API_KEY || Bun.env.ANTHROPIC_API_KEY;
+  console.log(`API Key:   ${key ? "SET" : "NOT SET — set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY"}`);
+
+  try {
+    await mkdir("workdir", { recursive: true });
+    const testFile = "workdir/.test-write";
+    await writeFile(testFile, "test");
+    await unlink(testFile);
+    console.log(`workdir:   writable`);
+  } catch {
+    console.log(`workdir:   NOT WRITABLE`);
+  }
+
   process.exit(0);
 }
 
