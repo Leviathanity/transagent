@@ -35,11 +35,13 @@ export async function stageInteract(
       case "y": break;
       case "n":
         const mod = await ask("修改指令: ");
-        modifications.set(block.id, `[MODIFIED: ${mod}] ${block.text}`);
+        console.log(`  [指令]: ${mod}`);
+        modifications.set(block.id, block.text);
         break;
       case "r":
         const req = await ask("重译要求: ");
-        modifications.set(block.id, `[RETRANSLATED: ${req}] ${block.text}`);
+        console.log(`  [重译要求]: ${req}`);
+        modifications.set(block.id, block.text);
         break;
       case "e":
         const edit = await ask("直接编辑: ");

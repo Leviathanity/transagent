@@ -3,6 +3,7 @@
 
 import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { readFile, mkdir, writeFile, unlink } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import type { PipelineConfig } from "../src/types/pipeline.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
 
@@ -66,16 +67,11 @@ check                         Check environment dependencies`);
   process.exit(1);
 }
 
-const inputIndex = args.indexOf("translate") + 1;
-const inputPath = args[inputIndex];
-
-if (!inputPath) {
-  console.error("Error: Missing input file path.");
-  process.exit(1);
-}
-
-const { values } = (await import("node:util")).parseArgs({
-  args: args.slice(inputIndex + 1),
+const translateIndex = args.indexOf("translate");
+const translateArgs = args.slice(translateIndex + 1);
+const { values, positionals } = (await import("node:util")).parseArgs({
+  args: translateArgs,
+  allowPositionals: true,
   options: {
     direction: { type: "string" },
     glossary: { type: "string" },
@@ -87,6 +83,12 @@ const { values } = (await import("node:util")).parseArgs({
   },
   strict: false,
 });
+const inputPath = positionals[0];
+
+if (!inputPath) {
+  console.error("Error: Missing input file path.");
+  process.exit(1);
+}
 
 let direction: "en2zh" | "zh2en";
 
@@ -95,7 +97,14 @@ if (values.direction === "zh2en" || values.direction === "en2zh") {
 } else {
   const content = await readFile(inputPath, "utf-8").catch(() => "");
   direction = detectDirection(content.slice(0, 500));
-  console.log(`Auto-detected direction: ${direction}`);
+  console.log(`Auto-detected direction: ${direction === "zh2en" ? "中文→英文" : "英文→中文"}`);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const confirm = await new Promise<string>(res => rl.question("确认？[Y/n]: ", res));
+  rl.close();
+  if (confirm.toLowerCase() === "n") {
+    console.error("Aborted by user.");
+    process.exit(1);
+  }
 }
 
 const config: PipelineConfig = {

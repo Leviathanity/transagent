@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, copyFile } from "node:fs/promises";
 import { createReviewSession, createGoalFixSession } from "../utils/omp-session.js";
 import { readIntermediate, writeIntermediate } from "../utils/file-manager.js";
 import type { StageResult } from "../types/pipeline.js";
@@ -58,7 +58,8 @@ export async function stageReview(
   // Check if any issues were found
   if (!allIssues || !allIssues.includes("[")) {
     console.log("  No issues found, skipping fix phase.");
-    return { stage: "review", success: true, outputPath: `${workDir}/${targetFilename}` };
+    await copyFile(`${workDir}/${targetFilename}`, `${workDir}/${outputFilename}`);
+    return { stage: "review", success: true, outputPath: `${workDir}/${outputFilename}` };
   }
 
   // Goal phase — fix all issues
@@ -75,5 +76,7 @@ export async function stageReview(
   await goalSession.prompt("开始逐项修复。");
   await goalSession.dispose();
 
-  return { stage: "review", success: true, outputPath: `${workDir}/${targetFilename}` };
+  await copyFile(`${workDir}/${targetFilename}`, `${workDir}/${outputFilename}`);
+
+  return { stage: "review", success: true, outputPath: `${workDir}/${outputFilename}` };
 }
