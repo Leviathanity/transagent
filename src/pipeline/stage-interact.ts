@@ -5,7 +5,7 @@ import { splitToSeparatedBlocks, assembleFromSeparatedBlocks } from "../splitter
 import type { StageResult } from "../types/pipeline.js";
 
 export async function stageInteract(
-  targetFilename: keyof typeof WORKDIR_LAYOUT,
+  targetFilename: string,
   outputPath: string,
   workDir: string,
 ): Promise<StageResult> {
