@@ -1,6 +1,5 @@
 import { readFile, copyFile } from "node:fs/promises";
 import { createReviewSession, createGoalFixSession } from "../utils/omp-session.js";
-import { readIntermediate, writeIntermediate } from "../utils/file-manager.js";
 import type { StageResult } from "../types/pipeline.js";
 
 interface ReviewCategory {
@@ -20,63 +19,48 @@ function parseCategories(specContent: string): ReviewCategory[] {
 
 export async function stageReview(
   specPath: string,
-  targetFilename: string,
-  reportFilename: string,
-  outputFilename: string,
+  inputPath: string,
+  reportPath: string,
+  outputPath: string,
   model: string,
-  workDir: string,
 ): Promise<StageResult> {
   const specContent = await readFile(specPath, "utf-8");
   const categories = parseCategories(specContent);
 
   if (categories.length === 0) {
-    return {
-      stage: "review",
-      success: false,
-      error: `No review categories found in spec: ${specPath}`,
-    };
+    return { stage: "review", success: false, error: `No review categories found in spec: ${specPath}` };
   }
 
   // Grill phase — per category multi-prompt
   const grillSession = await createReviewSession(specContent, model);
 
   for (const cat of categories) {
-    const prompt = `按规范第${cat.index}类「${cat.name}」检查项审查文件 ${workDir}/${targetFilename}。仅检查不修复。将发现的问题追加写入 ${workDir}/${reportFilename}。如果没有问题，写入"无问题"。`;
-
+    const prompt = `按规范第${cat.index}类「${cat.name}」检查项审查文件 ${inputPath}。仅检查不修复。将发现的问题追加写入 ${reportPath}。如果没有问题，写入"无问题"。`;
     await grillSession.prompt(prompt);
   }
 
   let allIssues = "";
   try {
-    allIssues = await readIntermediate(workDir, reportFilename);
+    allIssues = await readFile(reportPath, "utf-8");
   } catch {
     allIssues = "";
   }
 
   await grillSession.dispose();
 
-  // Check if any issues were found
   if (!allIssues || !allIssues.includes("[")) {
-    console.log("  No issues found, skipping fix phase.");
-    await copyFile(`${workDir}/${targetFilename}`, `${workDir}/${outputFilename}`);
-    return { stage: "review", success: true, outputPath: `${workDir}/${outputFilename}` };
+    await copyFile(inputPath, outputPath);
+    return { stage: "review", success: true, outputPath };
   }
 
   // Goal phase — fix all issues
-  const goalSession = await createGoalFixSession(
-    allIssues,
-    `${workDir}/${targetFilename}`,
-    model,
-  );
-
+  const goalSession = await createGoalFixSession(allIssues, inputPath, model);
   await goalSession.goalRuntime.createGoal({
-    objective: `修复文件 ${workDir}/${targetFilename} 中的所有问题。全部修复后标记 complete。`,
+    objective: `修复文件 ${inputPath} 中的所有问题。全部修复后标记 complete。`,
   });
-
   await goalSession.prompt("开始逐项修复。");
   await goalSession.dispose();
 
-  await copyFile(`${workDir}/${targetFilename}`, `${workDir}/${outputFilename}`);
-
-  return { stage: "review", success: true, outputPath: `${workDir}/${outputFilename}` };
+  await copyFile(inputPath, outputPath);
+  return { stage: "review", success: true, outputPath };
 }

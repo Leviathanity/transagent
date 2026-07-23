@@ -29,5 +29,6 @@ export interface StageResult {
   stage: string;
   success: boolean;
   outputPath?: string;
+  output?: string;
   error?: string;
 }

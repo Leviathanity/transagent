@@ -1,18 +1,16 @@
 import { createInterface } from "node:readline";
-import { readIntermediate, writeFinalOutput } from "../utils/file-manager.js";
-import { WORKDIR_LAYOUT } from "../utils/file-manager.js";
+import { readFile, writeFile } from "node:fs/promises";
 import { splitToSeparatedBlocks, assembleFromSeparatedBlocks } from "../splitter/source-block-splitter.js";
 import type { StageResult } from "../types/pipeline.js";
 
 export async function stageInteract(
-  targetFilename: string,
+  inputPath: string,
   outputPath: string,
-  workDir: string,
 ): Promise<StageResult> {
-  const content = await readIntermediate(workDir, targetFilename);
+  const content = await readFile(inputPath, "utf-8");
   const blocks = splitToSeparatedBlocks(content);
 
-  console.log(`\n翻译完成。共 ${blocks.length} 个 SourceBlock。`);
+  console.log(`\n文件: ${inputPath} 共 ${blocks.length} 个 SourceBlock。`);
   console.log("逐段确认: [y]通过 [n]修改 [r]重译 [e]编辑 [s]跳过 [q]退出\n");
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -30,7 +28,6 @@ export async function stageInteract(
     console.log(block.text.slice(0, 300) + (block.text.length > 300 ? "\n..." : ""));
 
     const answer = await ask("[y/n/r/e/s/q]: ");
-
     switch (answer.toLowerCase()) {
       case "y": break;
       case "n":
@@ -48,19 +45,14 @@ export async function stageInteract(
         modifications.set(block.id, edit);
         break;
       case "s": skipped = true; break;
-      case "q":
-        rl.close();
-        return { stage: "interact", success: false, error: "User quit" };
+      case "q": rl.close(); return { stage: "interact", success: false, error: "User quit" };
     }
   }
 
   rl.close();
 
-  const output = assembleFromSeparatedBlocks(blocks, (block) => {
-    return modifications.get(block.id) ?? block.text;
-  });
-
-  await writeFinalOutput(outputPath, output);
+  const final = assembleFromSeparatedBlocks(blocks, (block) => modifications.get(block.id) ?? block.text);
+  await writeFile(outputPath, final, "utf-8");
   console.log(`\n输出: ${outputPath}`);
   return { stage: "interact", success: true, outputPath };
 }

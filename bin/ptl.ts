@@ -1,122 +1,225 @@
 #!/usr/bin/env bun
 // bin/ptl.ts
 
-import { runPipeline } from "../src/pipeline/orchestrator.js";
-import { readFile, mkdir, writeFile, unlink } from "node:fs/promises";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import type { PipelineConfig } from "../src/types/pipeline.js";
+import { basename, dirname } from "node:path";
+import { stageConvert } from "../src/pipeline/stage-convert.js";
+import { stageReview } from "../src/pipeline/stage-review.js";
+import { stageTranslate } from "../src/pipeline/stage-translate.js";
+import { stageInteract } from "../src/pipeline/stage-interact.js";
+import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
+import { WORKDIR_LAYOUT } from "../src/utils/file-manager.js";
 
-const args = process.argv.slice(2);
+const cmd = process.argv[2];
+const subArgs = process.argv.slice(3);
 
-if (args[0] === "check") {
+async function ensureDir(path: string) {
+  await mkdir(dirname(path), { recursive: true });
+}
+
+// ─── ptl convert <file.pdf> [--output <path>] ───
+if (cmd === "convert") {
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: { output: { type: "string" } },
+    strict: false,
+  });
+  const pdfPath = positionals[0];
+  if (!pdfPath) { console.error("Usage: ptl convert <file.pdf> [--output <path>]"); process.exit(1); }
+
+  const r = await stageConvert(pdfPath);
+  if (!r.success) { console.error(r.error); process.exit(1); }
+
+  const output = r.outputPath ?? r.output!;
+  if (values.output) {
+    await ensureDir(values.output as string);
+    await writeFile(values.output as string, await readFile(output, "utf-8"), "utf-8");
+    console.log(`Output: ${values.output}`);
+  } else {
+    console.log(await readFile(output, "utf-8"));
+  }
+  process.exit(0);
+}
+
+// ─── ptl review <file.md> --spec <path> [--output <path>] [--report <path>] [--model <model>] ───
+if (cmd === "review") {
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: {
+      spec: { type: "string" },
+      output: { type: "string" },
+      report: { type: "string" },
+      model: { type: "string", default: "deepseek/deepseek-v4-pro" },
+    },
+    strict: false,
+  });
+  const mdPath = positionals[0];
+  if (!mdPath || !values.spec) {
+    console.error("Usage: ptl review <file.md> --spec <path> [--output <path>] [--report <path>] [--model <model>]");
+    process.exit(1);
+  }
+
+  const outputPath = (values.output as string) ?? mdPath.replace(/\.md$/, "_reviewed.md");
+  const reportPath = (values.report as string) ?? mdPath.replace(/\.md$/, "_report.md");
+
+  const r = await stageReview(
+    values.spec as string,
+    mdPath,
+    reportPath,
+    outputPath,
+    values.model as string,
+  );
+  if (!r.success) { console.error(r.error); process.exit(1); }
+  console.log(`Output: ${outputPath}`);
+  if (r.error) console.log(`Report: ${reportPath}`);
+  process.exit(0);
+}
+
+// ─── ptl translate-blocks <file.md> [--glossary <path>] [--direction <d>] [--model <m>] [--concurrency <n>] [--output <path>] ───
+if (cmd === "translate-blocks") {
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: {
+      glossary: { type: "string" },
+      direction: { type: "string", default: "en2zh" },
+      model: { type: "string", default: "deepseek/deepseek-v4-flash" },
+      concurrency: { type: "string", default: "3" },
+      output: { type: "string" },
+    },
+    strict: false,
+  });
+  const mdPath = positionals[0];
+  if (!mdPath) {
+    console.error("Usage: ptl translate-blocks <file.md> [options]");
+    process.exit(1);
+  }
+
+  const outputPath = (values.output as string) ?? mdPath.replace(/\.md$/, "_translated.md");
+  const direction = (values.direction === "zh2en" || values.direction === "en2zh")
+    ? values.direction : "en2zh";
+
+  const r = await stageTranslate(
+    values.glossary as string | undefined,
+    direction,
+    parseInt(values.concurrency as string),
+    values.model as string,
+    mdPath,
+    outputPath,
+  );
+  if (!r.success) { console.error(r.error); process.exit(1); }
+  console.log(`Output: ${outputPath}`);
+  process.exit(0);
+}
+
+// ─── ptl interact <file.md> [--output <path>] ───
+if (cmd === "interact") {
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: { output: { type: "string" } },
+    strict: false,
+  });
+  const mdPath = positionals[0];
+  if (!mdPath) {
+    console.error("Usage: ptl interact <file.md> [--output <path>]");
+    process.exit(1);
+  }
+
+  const outputPath = (values.output as string) ?? mdPath.replace(/\.md$/, "_final.md");
+  const r = await stageInteract(mdPath, outputPath);
+  process.exit(r.success ? 0 : 1);
+}
+
+// ─── ptl check ───
+if (cmd === "check") {
   console.log("pdf-translator environment check\n");
-
   console.log(`Bun:       v${Bun.version}`);
   console.log(`Node:      ${process.version}`);
 
   try {
     const { execa } = await import("execa");
     const r = await execa("markitdown", ["--version"], { timeout: 10000, reject: false });
-    if (r.exitCode === 0 && r.stdout.trim()) {
-      console.log(`MarkItDown: ${r.stdout.trim()}`);
-    } else {
-      console.log(`MarkItDown: NOT FOUND — run: pip install 'markitdown[all]'`);
-    }
-  } catch {
-    console.log(`MarkItDown: NOT FOUND — run: pip install 'markitdown[all]'`);
-  }
+    console.log(`MarkItDown: ${r.exitCode === 0 ? r.stdout.trim() : "NOT FOUND — run: pip install 'markitdown[all]'"}`);
+  } catch { console.log(`MarkItDown: NOT FOUND — run: pip install 'markitdown[all]'`); }
 
   try {
     const { execa } = await import("execa");
     const r = await execa("python", ["--version"], { timeout: 5000, reject: false });
     console.log(`Python:    ${r.stdout.trim() || r.stderr.trim()}`);
-  } catch {
-    console.log(`Python:    NOT FOUND`);
-  }
+  } catch { console.log(`Python:    NOT FOUND`); }
 
   const key = Bun.env.DEEPSEEK_API_KEY || Bun.env.ANTHROPIC_API_KEY;
   console.log(`API Key:   ${key ? "SET" : "NOT SET — set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY"}`);
-
-  try {
-    await mkdir("workdir", { recursive: true });
-    const testFile = "workdir/.test-write";
-    await writeFile(testFile, "test");
-    await unlink(testFile);
-    console.log(`workdir:   writable`);
-  } catch {
-    console.log(`workdir:   NOT WRITABLE`);
-  }
-
   process.exit(0);
 }
 
-if (args[0] !== "translate") {
-  console.log(`Usage: ptl <translate|check> [options]
+// ─── ptl translate <file.pdf> [options] (full pipeline) ───
+if (cmd === "translate") {
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: {
+      direction: { type: "string" },
+      glossary: { type: "string" },
+      "review-model": { type: "string", default: "deepseek/deepseek-v4-pro" },
+      "translate-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
+      concurrency: { type: "string", default: "3" },
+      "skip-interact": { type: "boolean", default: false },
+      output: { type: "string" },
+    },
+    strict: false,
+  });
+  const inputPath = positionals[0];
+  if (!inputPath) { console.error("Error: Missing input file."); process.exit(1); }
 
-translate <file.pdf> [options]
-  --direction <en2zh|zh2en>  Translation direction (default: auto-detect)
-  --glossary <path>          Glossary JSON file
-  --review-model <model>     Model for review stages (default: deepseek-v4-pro)
-  --translate-model <model>  Model for translation stage (default: deepseek-v4-flash)
-  --concurrency <n>          Translation concurrency (default: 3)
-  --skip-interact            Skip interactive review (CI mode)
-  --output <path>            Output file path (default: ./<name>_translated.md)
-
-check                         Check environment dependencies`);
-  process.exit(1);
-}
-
-const translateIndex = args.indexOf("translate");
-const translateArgs = args.slice(translateIndex + 1);
-const { values, positionals } = (await import("node:util")).parseArgs({
-  args: translateArgs,
-  allowPositionals: true,
-  options: {
-    direction: { type: "string" },
-    glossary: { type: "string" },
-    "review-model": { type: "string", default: "deepseek-v4-pro" },
-    "translate-model": { type: "string", default: "deepseek-v4-flash" },
-    concurrency: { type: "string", default: "3" },
-    "skip-interact": { type: "boolean", default: false },
-    output: { type: "string" },
-  },
-  strict: false,
-});
-const inputPath = positionals[0];
-
-if (!inputPath) {
-  console.error("Error: Missing input file path.");
-  process.exit(1);
-}
-
-let direction: "en2zh" | "zh2en";
-
-if (values.direction === "zh2en" || values.direction === "en2zh") {
-  direction = values.direction;
-} else {
-  const content = await readFile(inputPath, "utf-8").catch(() => "");
-  direction = detectDirection(content.slice(0, 500));
-  console.log(`Auto-detected direction: ${direction === "zh2en" ? "中文→英文" : "英文→中文"}`);
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const confirm = await new Promise<string>(res => rl.question("确认？[Y/n]: ", res));
-  rl.close();
-  if (confirm.toLowerCase() === "n") {
-    console.error("Aborted by user.");
-    process.exit(1);
+  let direction: "en2zh" | "zh2en";
+  if (values.direction === "zh2en" || values.direction === "en2zh") {
+    direction = values.direction;
+  } else {
+    const content = await readFile(inputPath, "utf-8").catch(() => "");
+    direction = detectDirection(content.slice(0, 500));
+    console.log(`Auto-detected direction: ${direction === "zh2en" ? "中文→英文" : "英文→中文"}`);
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const confirm = await new Promise<string>(res => rl.question("确认？[Y/n]: ", res));
+    rl.close();
+    if (confirm.toLowerCase() === "n") { console.error("Aborted."); process.exit(1); }
   }
+
+  await runPipeline({
+    inputPath,
+    outputPath: (values.output as string) ?? inputPath.replace(/\.pdf$/i, "") + "_translated.md",
+    direction,
+    glossaryPath: values.glossary as string | undefined,
+    reviewModel: values["review-model"] as string,
+    translateModel: values["translate-model"] as string,
+    concurrency: parseInt(values.concurrency as string),
+    skipInteract: values["skip-interact"] as boolean,
+    workDir: "workdir",
+  });
+  process.exit(0);
 }
 
-const config: PipelineConfig = {
-  inputPath,
-  outputPath: (values.output as string | undefined) ?? `${inputPath.replace(/\.pdf$/i, "")}_translated.md`,
-  direction,
-  glossaryPath: values.glossary as string | undefined,
-  reviewModel: values["review-model"] as string,
-  translateModel: values["translate-model"] as string,
-  concurrency: parseInt(values.concurrency as string),
-  skipInteract: values["skip-interact"] as boolean,
-  workDir: "workdir",
-};
+// ─── help ───
+console.log(`Usage: ptl <command> [args]
 
-await runPipeline(config);
+Commands:
+  convert <file.pdf> [--output <path>]            Stage 1: PDF → Markdown
+  review <file.md> --spec <path> [options]        Stage 2/4: Grill + Goal fix
+  translate-blocks <file.md> [options]            Stage 3: Block translation
+  interact <file.md> [--output <path>]            Stage 5: Terminal Q&A
+  translate <file.pdf> [options]                  Full pipeline (1-5)
+  check                                           Environment check
+
+Options for translate:
+  --direction <en2zh|zh2en>   Direction (default: auto-detect)
+  --glossary <path>           Glossary JSON file
+  --review-model <model>      Model for review (default: deepseek/deepseek-v4-pro)
+  --translate-model <model>   Model for translation (default: deepseek/deepseek-v4-flash)
+  --concurrency <n>           Translation concurrency (default: 3)
+  --skip-interact             Skip stage 5 (CI mode)
+  --output <path>             Output path`);
