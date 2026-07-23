@@ -1,0 +1,22 @@
+{
+  "name": "pdf-translator",
+  "version": "0.1.0",
+  "description": "PDF Chinese-English AI translation CLI based on OMP SDK",
+  "type": "module",
+  "bin": {
+    "ptl": "./bin/ptl.ts"
+  },
+  "scripts": {
+    "dev": "bun run bin/ptl.ts",
+    "test": "bun test",
+    "typecheck": "bun run tsc --noEmit"
+  },
+  "dependencies": {
+    "@oh-my-pi/pi-coding-agent": "latest",
+    "execa": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.0.0"
+  }
+}
