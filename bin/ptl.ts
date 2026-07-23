@@ -33,13 +33,13 @@ if (cmd === "convert") {
   const r = await stageConvert(pdfPath);
   if (!r.success) { console.error(r.error); process.exit(1); }
 
-  const output = r.outputPath ?? r.output!;
+  const content = r.output!;
   if (values.output) {
     await ensureDir(values.output as string);
-    await writeFile(values.output as string, await readFile(output, "utf-8"), "utf-8");
+    await writeFile(values.output as string, content, "utf-8");
     console.log(`Output: ${values.output}`);
   } else {
-    console.log(await readFile(output, "utf-8"));
+    console.log(content);
   }
   process.exit(0);
 }
@@ -155,6 +155,16 @@ if (cmd === "check") {
 
   const key = Bun.env.DEEPSEEK_API_KEY || Bun.env.ANTHROPIC_API_KEY;
   console.log(`API Key:   ${key ? "SET" : "NOT SET — set DEEPSEEK_API_KEY or ANTHROPIC_API_KEY"}`);
+
+  try {
+    await mkdir("workdir", { recursive: true });
+    await writeFile("workdir/.test-write", "test");
+    await unlink("workdir/.test-write");
+    console.log(`workdir:   writable`);
+  } catch {
+    console.log(`workdir:   NOT WRITABLE`);
+  }
+
   process.exit(0);
 }
 
