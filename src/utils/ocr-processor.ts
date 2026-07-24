@@ -9,9 +9,11 @@ const OCR_MODEL_PATH =
 
 /** WSL-accessible path to the Python script (relative to project root) */
 function wslScriptPath(): string {
-  // From WSL, C:\... becomes /mnt/c/...
+  // From WSL, C:\Users\... becomes /mnt/c/Users/...
   const abs = resolve("tmp_ocr.py");
-  return abs.replace(/^([A-Za-z]):\\/, "/mnt/$1/").replace(/\\/g, "/");
+  return abs
+    .replace(/^([A-Za-z]):\\/, (_m, d: string) => `/mnt/${d.toLowerCase()}/`)
+    .replace(/\\/g, "/");
 }
 
 const PYTHON_SCRIPT = `
@@ -32,8 +34,9 @@ model = AutoModel.from_pretrained(model_path, trust_remote_code=True,
 doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 mat = fitz.Matrix(300 / 72, 300 / 72)
+max_pages = min(3, len(doc))
 images = []
-for i in range(len(doc)):
+for i in range(max_pages):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
@@ -43,15 +46,14 @@ doc.close()
 old = sys.stdout
 sys.stdout = buf = io.StringIO()
 
-if len(images) == 1:
+os.makedirs("/tmp/ptl_ocr_out", exist_ok=True)
+for img in images:
     model.infer(tok, prompt="<image>document parsing.",
-        image_file=images[0],
+        image_file=img,
+        output_path="/tmp/ptl_ocr_out",
         base_size=1024, image_size=1024, crop_mode=False,
         max_length=32768, no_repeat_ngram_size=35, ngram_window=128)
-else:
-    model.infer_multi(tok, prompt="<image>Multi page parsing.",
-        image_files=images, image_size=1024,
-        max_length=65536, no_repeat_ngram_size=35, ngram_window=1024)
+    print("<PAGE_BREAK>", flush=True)
 
 sys.stdout = old
 raw = buf.getvalue()
@@ -71,7 +73,10 @@ export async function stageConvertWithOcr(
   outputPath?: string,
 ): Promise<StageResult> {
   try {
-    const wslInputPath = inputPath.replace(/\\/g, "/");
+    const absInput = resolve(inputPath);
+    const wslInputPath = absInput
+      .replace(/^([A-Za-z]):\\/, (_m: string, d: string) => `/mnt/${d.toLowerCase()}/`)
+      .replace(/\\/g, "/");
     const scriptPath = wslScriptPath();
 
     // Write inference script to project root (accessible from WSL as /mnt/c/...)
