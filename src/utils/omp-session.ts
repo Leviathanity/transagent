@@ -55,10 +55,10 @@ export async function createTranslateSession(
 
 ${glossaryPrompt}
 
-翻译规则:
-- 严格保留原始 Markdown 格式（标题、列表、表格、代码块、链接）
-- 代码块内容不翻译
-- 表格: 表头翻译，单元格按术语表处理
+ 翻译规则:
+- 严格保留原始 HTML 结构和标签（标题、段落、表格、代码块、链接、图片）
+- <pre><code> 标签内容不翻译
+- 表格: <th> 表头翻译，<td> 单元格按术语表处理
 - 术语表中的词必须使用指定翻译`,
   });
   return session;

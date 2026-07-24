@@ -10,12 +10,16 @@ export function buildTranslatorSystemPrompt(
 ${glossaryPrompt}
 
 翻译规则:
-- 严格保留原始 Markdown 格式
-- 代码块内容不翻译
-- 表格: 表头翻译，单元格按术语表处理
+- 严格保留原始 HTML 结构和标签（标题层级、表格、列表、链接、图片）
+- <pre><code> 标签内容不翻译
+- <code> 内联代码不翻译
+- <table>: <th> 表头翻译，<td> 单元格按术语表处理
+- <a href="...">: href 属性不翻译，链接文本翻译
+- <img src="..." alt="...">: src 不翻译，alt 翻译
+- 属性值（class, id, style）不翻译
 - 术语表中的词必须使用指定翻译`;
 }
 
 export function buildTranslatorTaskPrompt(sourceBlockText: string): string {
-  return `翻译以下 Markdown 内容：\n\n${sourceBlockText}`;
+  return `翻译以下 HTML 内容：\n\n${sourceBlockText}`;
 }

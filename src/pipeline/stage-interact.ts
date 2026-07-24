@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import { readFile, writeFile } from "node:fs/promises";
-import { splitToSeparatedBlocks, assembleFromSeparatedBlocks } from "../splitter/source-block-splitter.js";
+import { splitHtmlToBlocks, assembleHtmlBlocks } from "../splitter/html-block-splitter.js";
 import type { StageResult } from "../types/pipeline.js";
 
 export async function stageInteract(
@@ -8,7 +8,7 @@ export async function stageInteract(
   outputPath: string,
 ): Promise<StageResult> {
   const content = await readFile(inputPath, "utf-8");
-  const blocks = splitToSeparatedBlocks(content);
+  const blocks = splitHtmlToBlocks(content);
 
   console.log(`\n文件: ${inputPath} 共 ${blocks.length} 个 SourceBlock。`);
   console.log("逐段确认: [y]通过 [n]修改 [r]重译 [e]编辑 [s]跳过 [q]退出\n");
@@ -25,7 +25,15 @@ export async function stageInteract(
   for (let i = 0; i < blocks.length && !skipped; i++) {
     const block = blocks[i].block;
     console.log(`─── [${i + 1}/${blocks.length}] Level ${block.level} ───`);
-    console.log(block.text.slice(0, 300) + (block.text.length > 300 ? "\n..." : ""));
+    const displayText = block.text
+      .replace(/<[^>]+>/g, "")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&#x27;/g, "'")
+      .replace(/&quot;/g, '"')
+      .slice(0, 300);
+    console.log(displayText + (block.text.length > 300 ? "\n..." : ""));
 
     const answer = await ask("[y/n/r/e/s/q]: ");
     switch (answer.toLowerCase()) {
@@ -51,7 +59,7 @@ export async function stageInteract(
 
   rl.close();
 
-  const final = assembleFromSeparatedBlocks(blocks, (block) => modifications.get(block.id) ?? block.text);
+  const final = assembleHtmlBlocks(blocks, (block) => modifications.get(block.id) ?? block.text);
   await writeFile(outputPath, final, "utf-8");
   console.log(`\n输出: ${outputPath}`);
   return { stage: "interact", success: true, outputPath };

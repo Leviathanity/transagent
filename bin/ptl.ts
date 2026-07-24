@@ -44,7 +44,7 @@ if (cmd === "convert") {
   process.exit(0);
 }
 
-// ─── ptl review <file.md> --spec <path> [--output <path>] [--report <path>] [--model <model>] ───
+// ─── ptl review <file.html> --spec <path> [--output <path>] [--report <path>] [--model <model>] ───
 if (cmd === "review") {
   const { values, positionals } = (await import("node:util")).parseArgs({
     args: subArgs,
@@ -57,18 +57,18 @@ if (cmd === "review") {
     },
     strict: false,
   });
-  const mdPath = positionals[0];
-  if (!mdPath || !values.spec) {
-    console.error("Usage: ptl review <file.md> --spec <path> [--output <path>] [--report <path>] [--model <model>]");
+  const htmlPath = positionals[0];
+  if (!htmlPath || !values.spec) {
+    console.error("Usage: ptl review <file.html> --spec <path> [--output <path>] [--report <path>] [--model <model>]");
     process.exit(1);
   }
 
-  const outputPath = (values.output as string) ?? mdPath.replace(/\.md$/, "_reviewed.md");
-  const reportPath = (values.report as string) ?? mdPath.replace(/\.md$/, "_report.md");
+  const outputPath = (values.output as string) ?? htmlPath.replace(/\.html$/, "_reviewed.html");
+  const reportPath = (values.report as string) ?? htmlPath.replace(/\.html$/, "_report.md");
 
   const r = await stageReview(
     values.spec as string,
-    mdPath,
+    htmlPath,
     reportPath,
     outputPath,
     values.model as string,
@@ -79,7 +79,7 @@ if (cmd === "review") {
   process.exit(0);
 }
 
-// ─── ptl translate-blocks <file.md> [--glossary <path>] [--direction <d>] [--model <m>] [--concurrency <n>] [--output <path>] ───
+// ─── ptl translate-blocks <file.html> [--glossary <path>] [--direction <d>] [--model <m>] [--concurrency <n>] [--output <path>] ───
 if (cmd === "translate-blocks") {
   const { values, positionals } = (await import("node:util")).parseArgs({
     args: subArgs,
@@ -93,13 +93,13 @@ if (cmd === "translate-blocks") {
     },
     strict: false,
   });
-  const mdPath = positionals[0];
-  if (!mdPath) {
-    console.error("Usage: ptl translate-blocks <file.md> [options]");
+  const htmlPath = positionals[0];
+  if (!htmlPath) {
+    console.error("Usage: ptl translate-blocks <file.html> [options]");
     process.exit(1);
   }
 
-  const outputPath = (values.output as string) ?? mdPath.replace(/\.md$/, "_translated.md");
+  const outputPath = (values.output as string) ?? htmlPath.replace(/\.html$/, "_translated.html");
   const direction = (values.direction === "zh2en" || values.direction === "en2zh")
     ? values.direction : "en2zh";
 
@@ -108,7 +108,7 @@ if (cmd === "translate-blocks") {
     direction,
     parseInt(values.concurrency as string),
     values.model as string,
-    mdPath,
+    htmlPath,
     outputPath,
   );
   if (!r.success) { console.error(r.error); process.exit(1); }
@@ -116,7 +116,7 @@ if (cmd === "translate-blocks") {
   process.exit(0);
 }
 
-// ─── ptl interact <file.md> [--output <path>] ───
+// ─── ptl interact <file.html> [--output <path>] ───
 if (cmd === "interact") {
   const { values, positionals } = (await import("node:util")).parseArgs({
     args: subArgs,
@@ -124,14 +124,14 @@ if (cmd === "interact") {
     options: { output: { type: "string" } },
     strict: false,
   });
-  const mdPath = positionals[0];
-  if (!mdPath) {
-    console.error("Usage: ptl interact <file.md> [--output <path>]");
+  const htmlPath = positionals[0];
+  if (!htmlPath) {
+    console.error("Usage: ptl interact <file.html> [--output <path>]");
     process.exit(1);
   }
 
-  const outputPath = (values.output as string) ?? mdPath.replace(/\.md$/, "_final.md");
-  const r = await stageInteract(mdPath, outputPath);
+  const outputPath = (values.output as string) ?? htmlPath.replace(/\.html$/, "_final.html");
+  const r = await stageInteract(htmlPath, outputPath);
   process.exit(r.success ? 0 : 1);
 }
 
@@ -202,7 +202,7 @@ if (cmd === "translate") {
 
   await runPipeline({
     inputPath,
-    outputPath: (values.output as string) ?? inputPath.replace(/\.pdf$/i, "") + "_translated.md",
+    outputPath: (values.output as string) ?? inputPath.replace(/\.pdf$/i, "") + "_translated.html",
     direction,
     glossaryPath: values.glossary as string | undefined,
     reviewModel: values["review-model"] as string,
@@ -218,10 +218,10 @@ if (cmd === "translate") {
 console.log(`Usage: ptl <command> [args]
 
 Commands:
-  convert <file.pdf> [--output <path>]            Stage 1: PDF → Markdown
-  review <file.md> --spec <path> [options]        Stage 2/4: Grill + Goal fix
-  translate-blocks <file.md> [options]            Stage 3: Block translation
-  interact <file.md> [--output <path>]            Stage 5: Terminal Q&A
+  convert <file.pdf> [--output <path>]            Stage 1: PDF → HTML
+  review <file.html> --spec <path> [options]      Stage 2/4: Grill + Goal fix
+  translate-blocks <file.html> [options]          Stage 3: Block translation
+  interact <file.html> [--output <path>]          Stage 5: Terminal Q&A
   translate <file.pdf> [options]                  Full pipeline (1-5)
   check                                           Environment check
 

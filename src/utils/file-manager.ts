@@ -2,11 +2,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export const WORKDIR_LAYOUT = {
-  original: "01_original.md",
-  reviewed: "02_reviewed.md",
+  original: "01_original.html",
+  reviewed: "02_reviewed.html",
   reviewReport: "02_review_report.md",
-  translated: "03_translated.md",
-  formatted: "04_formatted.md",
+  translated: "03_translated.html",
+  formatted: "04_formatted.html",
   formatReport: "04_format_report.md",
 } as const;
 
