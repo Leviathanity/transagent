@@ -5,6 +5,7 @@ import { loadGlossary } from "../glossary/loader.js";
 import { formatForPrompt } from "../glossary/matcher.js";
 import { splitHtmlToBlocks, assembleHtmlBlocks } from "../splitter/html-block-splitter.js";
 import { buildTranslatorSystemPrompt } from "../agents/translator.js";
+import { asyncPool } from "../utils/async-pool.js";
 import type { StageResult } from "../types/pipeline.js";
 import type { SourceBlock } from "../types/source-block.js";
 
@@ -28,28 +29,6 @@ async function translateBlock(
   } finally {
     await session.dispose();
   }
-}
-
-async function asyncPool<T, R>(
-  concurrency: number,
-  items: T[],
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = [];
-  const queue = items.map((item, index) => ({ item, index }));
-  const executing = new Set<Promise<void>>();
-
-  for (const { item, index } of queue) {
-    const p = fn(item, index).then((r) => { results[index] = r; });
-    executing.add(p);
-    const clean = () => executing.delete(p);
-    p.then(clean, clean);
-    if (executing.size >= concurrency) {
-      await Promise.race(executing);
-    }
-  }
-  await Promise.all(executing);
-  return results;
 }
 
 export async function stageTranslate(
