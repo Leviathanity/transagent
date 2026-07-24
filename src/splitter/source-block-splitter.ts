@@ -1,4 +1,13 @@
-import type { SeparatedBlock, SourceBlock } from "../types/source-block.js";
+import type { SeparatedBlock, SourceBlock, BlockType } from "../types/source-block.js";
+
+function guessBlockType(level: number, text: string): BlockType {
+  const t = text.trim();
+  if (level > 0) return "heading";
+  if (t.startsWith("|")) return "table";
+  if (t.startsWith("```")) return "code";
+  if (t.startsWith("- ") || t.startsWith("* ") || t.match(/^\d+\.\s/)) return "list";
+  return "paragraph";
+}
 
 export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
   const blocks: SeparatedBlock[] = [];
@@ -29,7 +38,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
       if (!inTable && currentText.trim()) {
         if (currentLevel <= 2) {
           blocks.push({
-            block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, text: currentText },
+            block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
             separatorBefore,
           });
           separatorBefore = "";
@@ -45,7 +54,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
       if (line.trim() === "") {
         inTable = false;
         blocks.push({
-          block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, text: currentText },
+          block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
           separatorBefore,
         });
         separatorBefore = line + "\n";
@@ -63,7 +72,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
       if (hLevel <= 2 || (hLevel === 3 && currentText.length > 2000)) {
         if (currentText.trim()) {
           blocks.push({
-            block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, text: currentText },
+            block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
             separatorBefore,
           });
           separatorBefore = "";
@@ -79,7 +88,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
     if (line.trim() === "" && currentText.trim()) {
       if (currentLevel <= 2) {
         blocks.push({
-          block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, text: currentText },
+          block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
           separatorBefore,
         });
         separatorBefore = line + "\n";
@@ -95,7 +104,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
 
   if (currentText.trim()) {
     blocks.push({
-      block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, text: currentText },
+      block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
       separatorBefore,
     });
   }

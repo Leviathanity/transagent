@@ -1,6 +1,9 @@
+export type BlockType = "heading" | "paragraph" | "table" | "code" | "list" | "other";
+
 export interface SourceBlock {
   id: string;
   level: number;
+  blockType: BlockType;
   text: string;
 }
 

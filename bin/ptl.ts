@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // bin/ptl.ts
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { basename, dirname } from "node:path";
 import { stageConvert } from "../src/pipeline/stage-convert.js";
