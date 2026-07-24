@@ -34,9 +34,8 @@ model = AutoModel.from_pretrained(model_path, trust_remote_code=True,
 doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 mat = fitz.Matrix(300 / 72, 300 / 72)
-max_pages = min(3, len(doc))
 images = []
-for i in range(max_pages):
+for i in range(len(doc)):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
@@ -61,6 +60,38 @@ raw = buf.getvalue()
 # Strip det tags (keep text between them)
 clean = re.sub(r"<\\|det\\|>[^<]+<\\|/det\\|>", "", raw)
 clean = re.sub(r"\\n{3,}", "\\n\\n", clean).strip()
+
+# Detect and wrap headings in HTML tags
+def wrap_headings(text):
+    lines = text.split("\\n")
+    out = []
+    for line in lines:
+        s = line.strip()
+        if s.startswith("<") and not s.startswith("<PAGE_BREAK>"):
+            out.append(line)
+            continue
+        if s == "<PAGE_BREAK>":
+            out.append('<hr class="page-break"/>')
+            continue
+        if len(s) < 5 or "...." in s:
+            out.append(line)
+            continue
+        m = re.match(r"^(\\d+)\\.\\s+(.+)$", s)
+        if m:
+            out.append(f"<h2>{m.group(1)}. {m.group(2)}</h2>")
+            continue
+        m = re.match(r"^([IVXLCDM]+)\\.\\s+(.+)$", s)
+        if m:
+            out.append(f"<h3>{m.group(1)}. {m.group(2)}</h3>")
+            continue
+        m = re.match(r"^([ivxlcdm]+)\\.\\s+(.+)$", s)
+        if m:
+            out.append(f"<h4>{m.group(1)}. {m.group(2)}</h4>")
+            continue
+        out.append(line)
+    return "\\n".join(out)
+
+clean = wrap_headings(clean)
 html = "<!DOCTYPE html>\\n<html><body>\\n" + clean + "\\n</body></html>"
 print(html)
 
@@ -88,7 +119,7 @@ export async function stageConvertWithOcr(
       "wsl",
       [WSL_PYTHON, scriptPath, OCR_MODEL_PATH, argsJson],
       {
-        timeout: 600_000,
+        timeout: 1_200_000,  // 20 min for 33 pages
         stdout: "pipe",
         stderr: "pipe",
       },
