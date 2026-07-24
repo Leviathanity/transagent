@@ -6,15 +6,50 @@ import { formatForPrompt } from "../glossary/matcher.js";
 import { splitHtmlToBlocks, assembleHtmlBlocks } from "../splitter/html-block-splitter.js";
 import { buildTranslatorSystemPrompt } from "../agents/translator.js";
 import type { StageResult } from "../types/pipeline.js";
+import type { SourceBlock } from "../types/source-block.js";
 
-async function promptAndGetText(session: AgentSession, text: string): Promise<string> {
-  await session.prompt(text, { toolChoice: "none" });
-  const msg = session.getLastAssistantMessage();
-  if (!msg) return "";
-  for (const part of msg.content) {
-    if (part.type === "text") return part.text;
+async function translateBlock(
+  systemPrompt: string,
+  model: string,
+  block: SourceBlock,
+): Promise<string> {
+  const { session } = await createAgentSession({
+    modelPattern: model,
+    systemPrompt,
+  });
+  try {
+    await session.prompt(`翻译以下 HTML 内容：\n\n${block.text}`, { toolChoice: "none" });
+    const msg = session.getLastAssistantMessage();
+    if (!msg) return block.text;
+    for (const part of msg.content) {
+      if (part.type === "text") return part.text;
+    }
+    return block.text;
+  } finally {
+    await session.dispose();
   }
-  return "";
+}
+
+async function asyncPool<T, R>(
+  concurrency: number,
+  items: T[],
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = [];
+  const queue = items.map((item, index) => ({ item, index }));
+  const executing = new Set<Promise<void>>();
+
+  for (const { item, index } of queue) {
+    const p = fn(item, index).then((r) => { results[index] = r; });
+    executing.add(p);
+    const clean = () => executing.delete(p);
+    p.then(clean, clean);
+    if (executing.size >= concurrency) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+  return results;
 }
 
 export async function stageTranslate(
@@ -33,17 +68,18 @@ export async function stageTranslate(
     ? formatForPrompt((await loadGlossary(glossaryPath)).entries)
     : "";
 
-  const { session } = await createAgentSession({ modelPattern: model, systemPrompt: buildTranslatorSystemPrompt(glossaryPrompt, direction) });
+  const systemPrompt = buildTranslatorSystemPrompt(glossaryPrompt, direction);
 
-  const translationMap = new Map<string, string>();
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i].block;
-    const result = await promptAndGetText(session, `翻译以下 HTML 内容：\n\n${block.text}`);
-    translationMap.set(block.id, result || block.text);
-    console.log(`  [${i + 1}/${blocks.length}] ${block.id} done`);
-  }
-  await session.dispose();
+  const actualConcurrency = Math.min(concurrency, blocks.length);
+  console.log(`  Translating ${blocks.length} blocks (concurrency=${actualConcurrency})...`);
 
+  const results = await asyncPool(actualConcurrency, blocks, async (sb, i) => {
+    const translated = await translateBlock(systemPrompt, model, sb.block);
+    console.log(`  [${i + 1}/${blocks.length}] ${sb.block.id} done`);
+    return { id: sb.block.id, translated };
+  });
+
+  const translationMap = new Map(results.map((r) => [r.id, r.translated]));
   const assembled = assembleHtmlBlocks(blocks, (block) => translationMap.get(block.id) ?? block.text);
   await writeFile(outputPath, assembled, "utf-8");
   return { stage: "translate", success: true, outputPath };
