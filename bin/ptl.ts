@@ -30,16 +30,12 @@ if (cmd === "convert") {
   const pdfPath = positionals[0];
   if (!pdfPath) { console.error("Usage: ptl convert <file.pdf> [--output <path>]"); process.exit(1); }
 
-  const r = await stageConvert(pdfPath);
+  const outPath = values.output as string | undefined;
+  const r = await stageConvert(pdfPath, outPath);
   if (!r.success) { console.error(r.error); process.exit(1); }
 
-  const content = r.output!;
-  if (values.output) {
-    await ensureDir(values.output as string);
-    await writeFile(values.output as string, content, "utf-8");
-    console.log(`Output: ${values.output}`);
-  } else {
-    console.log(content);
+  if (!outPath) {
+    console.log(r.output);
   }
   process.exit(0);
 }

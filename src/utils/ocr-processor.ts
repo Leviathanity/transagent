@@ -23,6 +23,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 model_path = sys.argv[1]
 args = json.loads(sys.argv[2])
 pdf_path = args["pdf_path"]
+output_dir = args.get("output_dir", "")
 
 from transformers import AutoModel, AutoTokenizer
 
@@ -39,6 +40,16 @@ for i in range(len(doc)):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
+    # Extract embedded images from this page
+    if output_dir:
+        for img_index, xref in enumerate(doc.get_page_images(i)):
+            xref_id = xref[0]
+            pix = fitz.Pixmap(doc, xref_id)
+            if pix.n > 4:
+                pix = fitz.Pixmap(fitz.csRGB, pix)
+            img_name = f"page_{i+1:04d}_img_{img_index}.png"
+            pix.save(os.path.join(output_dir, img_name))
+            pix = None
 doc.close()
 
 # Sequential inference (CUDA + sys.stdout not thread-safe for parallelism)
@@ -89,7 +100,20 @@ def wrap_headings(text):
     return "\\n".join(out)
 
 clean = wrap_headings(clean)
-html = "<!DOCTYPE html>\\n<html><body>\\n" + clean + "\\n</body></html>"
+
+# Remove img tags referencing files that don't exist in output_dir
+if output_dir:
+    def keep_img(m):
+        src = m.group(1)
+        if src.startswith("http"):
+            return m.group(0)
+        fpath = os.path.join(output_dir, src)
+        if os.path.exists(fpath):
+            return m.group(0)
+        return f"<!-- image not extracted: {src} -->"
+    clean = re.sub(r'<img\s+[^>]*src="([^"]+)"[^>]*>', keep_img, clean)
+
+html = "<!DOCTYPE html>\\n<html><head><style>table{border-collapse:collapse;width:100%}td,th{border:1px solid #888;padding:6px;text-align:left}th{background:#f0f0f0}h2,h3,h4{margin-top:1.5em}img{max-width:100%}hr.page-break{border:none;border-top:2px dashed #ccc;margin:2em 0}</style></head><body>\\n" + clean + "\\n</body></html>"
 print(html)
 
 import shutil
@@ -110,7 +134,11 @@ export async function stageConvertWithOcr(
     // Write inference script to project root (accessible from WSL as /mnt/c/...)
     await writeFile("tmp_ocr.py", PYTHON_SCRIPT, "utf-8");
 
-    const argsJson = JSON.stringify({ pdf_path: wslInputPath });
+    const outputDir = outputPath ? dirname(outputPath) : "";
+    const wslOutputDir = outputDir
+      ? outputDir.replace(/^([A-Za-z]):\\/, (_m: string, d: string) => `/mnt/${d.toLowerCase()}/`).replace(/\\/g, "/")
+      : "";
+    const argsJson = JSON.stringify({ pdf_path: wslInputPath, output_dir: wslOutputDir });
 
     const result = await execa(
       "wsl",
