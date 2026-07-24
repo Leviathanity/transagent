@@ -34,9 +34,8 @@ model = AutoModel.from_pretrained(model_path, trust_remote_code=True,
 doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 mat = fitz.Matrix(300 / 72, 300 / 72)
-max_pages = min(len(doc), 5)
 images = []
-for i in range(max_pages):
+for i in range(len(doc)):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)

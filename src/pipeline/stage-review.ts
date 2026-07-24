@@ -31,13 +31,16 @@ export async function stageReview(
     return { stage: "review", success: false, error: `No review categories found in spec: ${specPath}` };
   }
 
-  // Grill phase — per category multi-prompt
+  // Grill phase — single prompt for all categories
   const grillSession = await createReviewSession(specContent, model);
 
-  for (const cat of categories) {
-    const prompt = `按规范第${cat.index}类「${cat.name}」检查项审查文件 ${inputPath}。仅检查不修复。将发现的问题追加写入 ${reportPath}。如果没有问题，写入"无问题"。`;
-    await grillSession.prompt(prompt);
-  }
+  const categoryList = categories.map((c) => `${c.index}. ${c.name}`).join("\n");
+  const prompt = `按以下规范逐类审查文件 ${inputPath}，仅检查不修复：
+
+${categoryList}
+
+将发现的问题追加写入 ${reportPath}。如果没有问题，写入"无问题"。`;
+  await grillSession.prompt(prompt);
 
   let allIssues = "";
   try {
