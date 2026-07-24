@@ -34,27 +34,25 @@ model = AutoModel.from_pretrained(model_path, trust_remote_code=True,
 doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 mat = fitz.Matrix(300 / 72, 300 / 72)
+max_pages = min(len(doc), 5)
 images = []
-for i in range(len(doc)):
+for i in range(max_pages):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
 doc.close()
 
-# Run inference, capture stdout
-old = sys.stdout
-sys.stdout = buf = io.StringIO()
-
+# Sequential inference (CUDA + sys.stdout not thread-safe for parallelism)
 os.makedirs("/tmp/ptl_ocr_out", exist_ok=True)
+old_stdout = sys.stdout
+sys.stdout = buf = io.StringIO()
 for img in images:
     model.infer(tok, prompt="<image>document parsing.",
-        image_file=img,
-        output_path="/tmp/ptl_ocr_out",
+        image_file=img, output_path="/tmp/ptl_ocr_out",
         base_size=1024, image_size=1024, crop_mode=False,
         max_length=32768, no_repeat_ngram_size=35, ngram_window=128)
     print("<PAGE_BREAK>", flush=True)
-
-sys.stdout = old
+sys.stdout = old_stdout
 raw = buf.getvalue()
 
 # Strip det tags (keep text between them)

@@ -53,7 +53,7 @@ if (cmd === "review") {
       spec: { type: "string" },
       output: { type: "string" },
       report: { type: "string" },
-      model: { type: "string", default: "deepseek/deepseek-v4-pro" },
+      model: { type: "string", default: "deepseek/deepseek-v4-flash" },
     },
     strict: false,
   });
@@ -176,7 +176,7 @@ if (cmd === "translate") {
     options: {
       direction: { type: "string" },
       glossary: { type: "string" },
-      "review-model": { type: "string", default: "deepseek/deepseek-v4-pro" },
+      "review-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
       "translate-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
       concurrency: { type: "string", default: "3" },
       "skip-interact": { type: "boolean", default: false },
@@ -228,7 +228,7 @@ Commands:
 Options for translate:
   --direction <en2zh|zh2en>   Direction (default: auto-detect)
   --glossary <path>           Glossary JSON file
-  --review-model <model>      Model for review (default: deepseek/deepseek-v4-pro)
+  --review-model <model>      Model for review (default: deepseek/deepseek-v4-flash)
   --translate-model <model>   Model for translation (default: deepseek/deepseek-v4-flash)
   --concurrency <n>           Translation concurrency (default: 3)
   --skip-interact             Skip stage 5 (CI mode)
