@@ -14,9 +14,9 @@ export async function runPipeline(config: PipelineConfig): Promise<void> {
   const wd = config.workDir;
 
   console.log("[1/5] Converting PDF...");
-  const r1 = await stageConvert(config.inputPath);
+  const originalPath = `${wd}/${WORKDIR_LAYOUT.original}`;
+  const r1 = await stageConvert(config.inputPath, originalPath);
   if (!r1.success) { console.error(`Conversion failed: ${r1.error}`); process.exit(1); }
-  await writeIntermediate(wd, WORKDIR_LAYOUT.original, r1.output!);
 
   console.log("[2/5] Reviewing conversion quality...");
   const reviewedPath = `${wd}/${WORKDIR_LAYOUT.reviewed}`;
