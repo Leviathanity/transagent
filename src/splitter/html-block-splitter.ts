@@ -117,6 +117,82 @@ export function splitHtmlToBlocks(html: string): SeparatedBlock[] {
   return blocks;
 }
 
+export function splitPerfectHtmlToBlocks(html: string): SeparatedBlock[] {
+  const trimmed = html.trim();
+  const wrappedHtml = !/^<(?:!doctype\s+)?html\b/i.test(trimmed)
+    ? `<!doctype html><html><body>${html}</body></html>`
+    : html;
+  const { document } = parseHTML(wrappedHtml) as any;
+  const blocks: SeparatedBlock[] = [];
+  const pages = [...document.querySelectorAll(".page")] as any[];
+
+  for (const page of pages) {
+    const divs = [...page.querySelectorAll("div[style*='position:absolute']")] as any[];
+
+    for (const el of divs) {
+      const className = el.className || "";
+      const isTable = className.includes("det-table");
+      const isImage = className.includes("det-image");
+      const isPageNum = className.includes("det-pagenumber") || className.includes("det-footer");
+      const level = isPageNum ? 0 : isTable ? 0 : 0;
+      let blockType: BlockType = "paragraph";
+
+      if (isTable) blockType = "table";
+      else if (isImage) blockType = "other";
+      else if (isPageNum) blockType = "other";
+
+      const text = isTable ? el.innerHTML : (el.textContent ?? "");
+      blocks.push({
+        block: {
+          id: `sb_${blocks.length}`,
+          level,
+          blockType,
+          text,
+        },
+        separatorBefore: "",
+      });
+    }
+  }
+  return blocks;
+}
+
+export function assemblePerfectHtml(
+  blocks: SeparatedBlock[],
+  translations: Map<string, string>,
+  originalHtml: string,
+): string {
+  const { document } = parseHTML(
+    /^<(?:!doctype\s+)?html\b/i.test(originalHtml.trim())
+      ? originalHtml
+      : `<!doctype html><html><body>${originalHtml}</body></html>`
+  ) as any;
+
+  const pages = [...document.querySelectorAll(".page")] as any[];
+  let bi = 0;
+  for (const page of pages) {
+    const divs = [...page.querySelectorAll("div[style*='position:absolute']")] as any[];
+    for (const el of divs) {
+      const block = blocks[bi];
+      if (!block) break;
+      const t = translations.get(block.block.id);
+      if (t !== undefined) {
+        const className = el.className || "";
+        if (className.includes("det-table")) {
+          el.innerHTML = t;
+        } else {
+          // Escape translated text back for HTML display
+          const escaped = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          el.textContent = escaped;
+        }
+      }
+      bi++;
+    }
+  }
+
+  const body = document.body || document.documentElement;
+  return body.innerHTML;
+}
+
 export function assembleHtmlBlocks(
   blocks: SeparatedBlock[],
   getContent: (block: SourceBlock) => string,

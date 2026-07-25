@@ -3,7 +3,7 @@ import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { readFile, writeFile } from "node:fs/promises";
 import { loadGlossary } from "../glossary/loader.js";
 import { formatForPrompt } from "../glossary/matcher.js";
-import { splitHtmlToBlocks, assembleHtmlBlocks } from "../splitter/html-block-splitter.js";
+import { splitHtmlToBlocks, assembleHtmlBlocks, splitPerfectHtmlToBlocks, assemblePerfectHtml } from "../splitter/html-block-splitter.js";
 import { buildTranslatorSystemPrompt } from "../agents/translator.js";
 import { asyncPool } from "../utils/async-pool.js";
 import type { StageResult } from "../types/pipeline.js";
@@ -40,8 +40,12 @@ export async function stageTranslate(
   outputPath: string,
 ): Promise<StageResult> {
   const htmlContent = await readFile(inputPath, "utf-8");
-  const blocks = splitHtmlToBlocks(htmlContent);
-  console.log(`  Split into ${blocks.length} SourceBlocks`);
+  const isPerfect = htmlContent.includes('class="page"');
+
+  const blocks = isPerfect
+    ? splitPerfectHtmlToBlocks(htmlContent)
+    : splitHtmlToBlocks(htmlContent);
+  console.log(`  Split into ${blocks.length} SourceBlocks (format: ${isPerfect ? "pixel-perfect" : "plain-html"})`);
 
   const glossaryPrompt = glossaryPath
     ? formatForPrompt((await loadGlossary(glossaryPath)).entries)
@@ -59,7 +63,9 @@ export async function stageTranslate(
   });
 
   const translationMap = new Map(results.map((r) => [r.id, r.translated]));
-  const assembled = assembleHtmlBlocks(blocks, (block) => translationMap.get(block.id) ?? block.text);
+  const assembled = isPerfect
+    ? assemblePerfectHtml(blocks, translationMap, htmlContent)
+    : assembleHtmlBlocks(blocks, (block) => translationMap.get(block.id) ?? block.text);
   await writeFile(outputPath, assembled, "utf-8");
   return { stage: "translate", success: true, outputPath };
 }
