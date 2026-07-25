@@ -89,9 +89,34 @@ def parse_blocks(text):
         pos = next_m.start() if next_m else len(text)
     return blocks
 
+def dedup_blocks(blocks, threshold=15):
+    """Remove near-duplicate blocks (same type, same text, close positions)."""
+    if not blocks:
+        return blocks
+    kept = []
+    for b in blocks:
+        text = b["content"].strip()
+        if not text:
+            continue
+        cx = (b["bbox"][0] + b["bbox"][2]) // 2
+        cy = (b["bbox"][1] + b["bbox"][3]) // 2
+        dup = False
+        for k in kept:
+            if b["type"] != k["type"]:
+                continue
+            k_cx = (k["bbox"][0] + k["bbox"][2]) // 2
+            k_cy = (k["bbox"][1] + k["bbox"][3]) // 2
+            if abs(cx - k_cx) < threshold and abs(cy - k_cy) < threshold:
+                if b["content"].strip() == k["content"].strip():
+                    dup = True
+                    break
+        if not dup:
+            kept.append(b)
+    return kept
+
 # Group by page
 pages_raw = re.split(r"<PAGE_BREAK>\\s*", raw)
-pages = [parse_blocks(p) for p in pages_raw if p.strip()]
+pages = [dedup_blocks(parse_blocks(p)) for p in pages_raw if p.strip()]
 
 # Get page dimensions and compute bbox scale factor
 # Model processes at image_size=1024 on longest side; bbox is in model space
@@ -154,7 +179,7 @@ for pi, blocks in enumerate(pages):
 
 css = """<style>
 body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
-.det-table table{border-collapse:collapse;width:100%;background:rgba(255,255,255,0.85);}
+.det-table table{border-collapse:collapse;width:100%;table-layout:fixed;background:rgba(255,255,255,0.85);word-wrap:break-word;}
 .det-table td,.det-table th{border:1px solid #aaa;padding:2px 4px;font-size:11px;}
 .det-table th{background:#e8e8e8;font-weight:bold;}
 .det-image img{max-width:100%;height:auto;}
