@@ -179,9 +179,11 @@ for pi, blocks in enumerate(pages):
 
 css = """<style>
 body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
-.det-table table{border-collapse:collapse;width:100%;table-layout:fixed;background:rgba(255,255,255,0.85);word-wrap:break-word;}
+.det-table table,.det-table td,.det-table th{background:#fff;}
+.det-table table{border-collapse:collapse;width:100%;table-layout:fixed;word-wrap:break-word;}
 .det-table td,.det-table th{border:1px solid #aaa;padding:2px 4px;font-size:11px;}
-.det-table th{background:#e8e8e8;font-weight:bold;}
+.det-table td,.det-table th{border:1px solid #aaa;padding:2px 4px;font-size:11px;}
+.det-table th{background:#e8e8e8;}
 .det-image img{max-width:100%;height:auto;}
 </style>"""
 
