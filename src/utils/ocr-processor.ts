@@ -35,8 +35,9 @@ model = AutoModel.from_pretrained(model_path, trust_remote_code=True,
 doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 mat = fitz.Matrix(300 / 72, 300 / 72)
+max_pages = min(len(doc), 5)
 images = []
-for i in range(len(doc)):
+for i in range(max_pages):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
@@ -65,55 +66,94 @@ for img in images:
 sys.stdout = old_stdout
 raw = buf.getvalue()
 
-# Strip det tags (keep text between them)
-clean = re.sub(r"<\\|det\\|>[^<]+<\\|/det\\|>", "", raw)
-clean = re.sub(r"\\n{3,}", "\\n\\n", clean).strip()
+# ── Parse det tags into positioned blocks ──
+from PIL import Image
 
-# Detect and wrap headings in HTML tags
-def wrap_headings(text):
-    lines = text.split("\\n")
-    out = []
-    for line in lines:
-        s = line.strip()
-        if s.startswith("<") and not s.startswith("<PAGE_BREAK>"):
-            out.append(line)
-            continue
-        if s == "<PAGE_BREAK>":
-            out.append('<hr class="page-break"/>')
-            continue
-        if len(s) < 5 or "...." in s:
-            out.append(line)
-            continue
-        m = re.match(r"^(\\d+)\\.\\s+(.+)$", s)
-        if m:
-            out.append(f"<h2>{m.group(1)}. {m.group(2)}</h2>")
-            continue
-        m = re.match(r"^([IVXLCDM]+)\\.\\s+(.+)$", s)
-        if m:
-            out.append(f"<h3>{m.group(1)}. {m.group(2)}</h3>")
-            continue
-        m = re.match(r"^([ivxlcdm]+)\\.\\s+(.+)$", s)
-        if m:
-            out.append(f"<h4>{m.group(1)}. {m.group(2)}</h4>")
-            continue
-        out.append(line)
-    return "\\n".join(out)
+DET_RE = re.compile(
+    r"<\\|det\\|>(\\w+)\\s+\\[(\\d+),\\s*(\\d+),\\s*(\\d+),\\s*(\\d+)\\]\\s*<\\|/det\\|>"
+)
 
-clean = wrap_headings(clean)
+def parse_blocks(text):
+    blocks = []
+    pos = 0
+    while pos < len(text):
+        m = DET_RE.search(text, pos)
+        if not m:
+            break
+        t = m.group(1)
+        x1,y1,x2,y2 = int(m.group(2)),int(m.group(3)),int(m.group(4)),int(m.group(5))
+        tag_end = m.end()
+        next_m = DET_RE.search(text, tag_end)
+        content = text[tag_end:next_m.start()].strip() if next_m else text[tag_end:].strip()
+        blocks.append({"type":t,"bbox":(x1,y1,x2,y2),"content":content})
+        pos = next_m.start() if next_m else len(text)
+    return blocks
 
-# Remove img tags referencing files that don't exist in output_dir
-if output_dir:
-    def keep_img(m):
-        src = m.group(1)
-        if src.startswith("http"):
-            return m.group(0)
-        fpath = os.path.join(output_dir, src)
-        if os.path.exists(fpath):
-            return m.group(0)
-        return f"<!-- image not extracted: {src} -->"
-    clean = re.sub(r'<img\s+[^>]*src="([^"]+)"[^>]*>', keep_img, clean)
+# Group by page
+pages_raw = re.split(r"<PAGE_BREAK>\\s*", raw)
+pages = [parse_blocks(p) for p in pages_raw if p.strip()]
 
-html = "<!DOCTYPE html>\\n<html><head><style>table{border-collapse:collapse;width:100%}td,th{border:1px solid #888;padding:6px;text-align:left}th{background:#f0f0f0}h2,h3,h4{margin-top:1.5em}img{max-width:100%}hr.page-break{border:none;border-top:2px dashed #ccc;margin:2em 0}</style></head><body>\\n" + clean + "\\n</body></html>"
+# Get page dimensions
+tmp_img_0 = os.path.join(tmp_dir, "p0000.png")
+page_w, page_h = 2480, 3508
+if os.path.exists(tmp_img_0):
+    with Image.open(tmp_img_0) as im:
+        page_w, page_h = im.size
+
+# Generate positioned HTML per page
+page_divs = []
+for pi, blocks in enumerate(pages):
+    png_path = os.path.join(tmp_dir, f"p{pi:04d}.png")
+    parts = [f'<div class="page" style="position:relative;width:{page_w}px;height:{page_h}px;margin:0 auto;overflow:hidden;background:#fff;">']
+
+    # Background: PDF page screenshot
+    if os.path.exists(png_path):
+        parts.append(f'<img src="{png_path}" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;">')
+
+    # Foreground: bbox-positioned blocks
+    for bi, b in enumerate(blocks):
+        x1,y1,x2,y2 = b["bbox"]
+        w,h = x2-x1, y2-y1
+        ct = b["content"]
+        tp = b["type"]
+
+        if tp == "table":
+            sty = f"position:absolute;left:{x1}px;top:{y1}px;width:{w}px;height:{h}px;overflow:auto;z-index:2;"
+            parts.append(f'<div class="det-table" style="{sty}">{ct}</div>')
+        elif tp in ("header","footer","page_number"):
+            sty = f"position:absolute;left:{x1}px;top:{y1}px;width:{w}px;z-index:2;"
+            if tp == "header": sty += "color:#888;font-size:10px;"
+            if tp == "footer": sty += "color:#888;font-size:9px;"
+            if tp == "page_number": sty += "color:#888;font-size:9px;text-align:right;"
+            safe = ct.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            parts.append(f'<div style="{sty}">{safe}</div>')
+        elif tp == "image":
+            sty = f"position:absolute;left:{x1}px;top:{y1}px;width:{w}px;height:{h}px;z-index:2;"
+            crop_name = f"crop_p{pi:04d}_{bi}.png"
+            crop_path = os.path.join(output_dir, crop_name) if output_dir else ""
+            if os.path.exists(png_path):
+                try:
+                    Image.open(png_path).crop((x1,y1,x2,y2)).save(crop_path)
+                except: crop_path = ""
+            src = os.path.basename(crop_path) if crop_path and os.path.exists(crop_path) else ""
+            parts.append(f'<div class="det-image" style="{sty}"><img src="{src}" style="width:100%;height:100%;"></div>')
+        else:
+            sty = f"position:absolute;left:{x1}px;top:{y1}px;width:{w}px;z-index:2;font-size:11px;line-height:1.4;"
+            safe = ct.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            parts.append(f'<div style="{sty}">{safe}</div>')
+
+    parts.append("</div>")
+    page_divs.append("\\n".join(parts))
+
+css = """<style>
+body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
+.det-table table{border-collapse:collapse;width:100%;background:rgba(255,255,255,0.85);}
+.det-table td,.det-table th{border:1px solid #aaa;padding:2px 4px;font-size:11px;}
+.det-table th{background:#e8e8e8;font-weight:bold;}
+.det-image img{max-width:100%;height:auto;}
+</style>"""
+
+html = f"<!DOCTYPE html>\\n<html><head><meta charset=\\"utf-8\\">{css}</head><body>\\n" + "\\n".join(page_divs) + "\\n</body></html>"
 print(html)
 
 import shutil
