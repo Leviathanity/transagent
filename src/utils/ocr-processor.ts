@@ -93,7 +93,8 @@ def parse_blocks(text):
 pages_raw = re.split(r"<PAGE_BREAK>\\s*", raw)
 pages = [parse_blocks(p) for p in pages_raw if p.strip()]
 
-# Get page dimensions
+# Get page dimensions and compute bbox scale factor
+# Model processes at image_size=1024 on longest side; bbox is in model space
 tmp_img_0 = os.path.join(tmp_dir, "p0000.png")
 page_w, page_h = 2480, 3508
 if os.path.exists(tmp_img_0):
@@ -106,11 +107,17 @@ for pi, blocks in enumerate(pages):
     png_path = os.path.join(tmp_dir, f"p{pi:04d}.png")
     parts = [f'<div class="page" style="position:relative;width:{page_w}px;height:{page_h}px;margin:0 auto;overflow:hidden;background:#fff;">']
 
-    # Background: PDF page screenshot
-    if os.path.exists(png_path):
-        parts.append(f'<img src="{png_path}" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;">')
+    # Background: PDF page screenshot (copy to output_dir for browser access)
+    bg_src = ""
+    if output_dir and os.path.exists(png_path):
+        bg_name = f"page_bg_{pi:04d}.png"
+        import shutil as _su
+        _su.copy(png_path, os.path.join(output_dir, bg_name))
+        bg_src = bg_name
+    if bg_src:
+        parts.append(f'<img src="{bg_src}" style="position:absolute;top:0;left:0;width:100%;height:100%;z-index:1;pointer-events:none;">')
 
-    # Foreground: bbox-positioned blocks
+    # Foreground: bbox-positioned blocks (bbox in page-pixel space)
     for bi, b in enumerate(blocks):
         x1,y1,x2,y2 = b["bbox"]
         w,h = x2-x1, y2-y1
