@@ -42,6 +42,7 @@ if (cmd === "convert") {
 
 // ─── ptl review <file.html> --spec <path> [--output <path>] [--report <path>] [--model <model>] ───
 if (cmd === "review") {
+  if (Bun.env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = Bun.env.DEEPSEEK_API_KEY;
   const { values, positionals } = (await import("node:util")).parseArgs({
     args: subArgs,
     allowPositionals: true,
