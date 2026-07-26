@@ -18,6 +18,7 @@ function wslScriptPath(): string {
 
 const PYTHON_SCRIPT = `
 import torch, os, sys, io, re, json, fitz, tempfile
+from PIL import Image
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 model_path = sys.argv[1]
@@ -42,26 +43,39 @@ PDF_PT_W = doc[0].rect.width   # e.g. 595
 PDF_PT_H = doc[0].rect.height  # e.g. 842
 page_w = int(PDF_PT_W * 300 / 72)  # 2481
 page_h = int(PDF_PT_H * 300 / 72)  # 3508
+PDF_TO_PAGE = 300 / 72  # PDF point → 300 DPI pixel
+MODEL_SIZE = 1024
 
 images = []
+embedded_images = []  # (page_idx, crop_filename, model_bbox)
 for i in range(max_pages):
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
-    # Extract embedded images from this page
+    # Extract embedded images via page render crops (get_image_info → PDF pt → 300 DPI px)
     if output_dir:
-        for img_index, xref in enumerate(doc.get_page_images(i)):
-            xref_id = xref[0]
-            pix = fitz.Pixmap(doc, xref_id)
-            if pix.n > 4:
-                pix = fitz.Pixmap(fitz.csRGB, pix)
-            img_name = f"page_{i+1:04d}_img_{img_index}.png"
-            pix.save(os.path.join(output_dir, img_name))
-            pix = None
+        for img_info in doc[i].get_image_info():
+            bbox_pdf = img_info["bbox"]
+            # Convert PDF point bbox to 300 DPI pixel coords for cropping
+            crop_x1 = int(bbox_pdf[0] * PDF_TO_PAGE)
+            crop_y1 = int(bbox_pdf[1] * PDF_TO_PAGE)
+            crop_x2 = int(bbox_pdf[2] * PDF_TO_PAGE)
+            crop_y2 = int(bbox_pdf[3] * PDF_TO_PAGE)
+            # Convert PDF point bbox to model space [0,1024] for overlap matching
+            mx1 = bbox_pdf[0] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
+            my1 = bbox_pdf[1] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+            mx2 = bbox_pdf[2] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
+            my2 = bbox_pdf[3] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+            img_name = f"emb_p{i:04d}_n{img_info['number']}.png"
+            img_path = os.path.join(output_dir, img_name)
+            if not os.path.exists(img_path):
+                try:
+                    Image.open(out).crop((crop_x1, crop_y1, crop_x2, crop_y2)).save(img_path)
+                except:
+                    continue
+            embedded_images.append((i, img_name, (mx1, my1, mx2, my2)))
 
 # ── Extract PDF text with font info for dual-path styling ──
-PDF_TO_PAGE = 300 / 72  # PDF point → 300 DPI pixel
-MODEL_SIZE = 1024
 page_fonts = []
 for i in range(max_pages):
     page = doc[i]
@@ -106,7 +120,6 @@ sys.stdout = old_stdout
 raw = buf.getvalue()
  
 # ── Parse det tags into positioned blocks ──
-from PIL import Image
 
 DET_RE = re.compile(
     r"<\\|det\\|>(\\w+)\\s+\\[(\\d+),\\s*(\\d+),\\s*(\\d+),\\s*(\\d+)\\]\\s*<\\|/det\\|>"
@@ -204,6 +217,25 @@ for pi, blocks in enumerate(pages):
             b["italic"] = best["italic"]
             b["font_color"] = best["color"]
 
+# ── Match embedded PDF images to OCR blocks ──
+for pi, page_blocks in enumerate(pages):
+    page_imgs = [(f, b) for (p, f, b) in embedded_images if p == pi]
+    if not page_imgs:
+        continue
+    for b in page_blocks:
+        if b["type"] == "table":
+            continue
+        ob = b["bbox"]
+        ob_area = (ob[2] - ob[0]) * (ob[3] - ob[1])
+        if ob_area <= 0:
+            continue
+        for img_file, img_bbox in page_imgs:
+            overlap = bbox_overlap(ob, img_bbox)
+            if overlap / ob_area > 0.3:
+                b["type"] = "image"
+                b["embedded_img"] = img_file
+                break
+
 # Compute page dimensions for reconstruction (already set above)
 
 def scale_coord(c, dim):
@@ -252,15 +284,19 @@ for pi, blocks in enumerate(pages):
             parts.append(f'<div style="{sty}">{safe}</div>')
         elif tp == "image":
             sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;height:{sh}px;z-index:2;"
-            crop_name = f"crop_p{pi:04d}_{bi}.png"
-            crop_path = os.path.join(output_dir, crop_name) if output_dir else ""
-            png_path = os.path.join(tmp_dir, f"p{pi:04d}.png")
-            if os.path.exists(png_path):
-                try:
-                    Image.open(png_path).crop((x1,y1,x2,y2)).save(crop_path)
-                except: crop_path = ""
-            src = os.path.basename(crop_path) if crop_path and os.path.exists(crop_path) else ""
-            parts.append(f'<div class="det-image" style="{sty}"><img src="{src}" style="width:100%;height:100%;"></div>')
+            if b.get("embedded_img"):
+                src = b["embedded_img"]
+            else:
+                crop_name = f"crop_p{pi:04d}_{bi}.png"
+                crop_path = os.path.join(output_dir, crop_name) if output_dir else ""
+                png_path = os.path.join(tmp_dir, f"p{pi:04d}.png")
+                if os.path.exists(png_path):
+                    try:
+                        Image.open(png_path).crop((x1,y1,x2,y2)).save(crop_path)
+                    except: crop_path = ""
+                src = os.path.basename(crop_path) if crop_path and os.path.exists(crop_path) else ""
+            alt = b.get("content", "").replace('"', "&quot;")
+            parts.append(f'<div class="det-image" style="{sty}"><img src="{src}" alt="{alt}" style="width:100%;height:100%;"></div>')
         elif tp == "title":
             sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;z-index:2;white-space:nowrap;overflow:hidden;" + font_sty
             safe = ct.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
