@@ -8,6 +8,7 @@ import { stageConvert } from "../src/pipeline/stage-convert.js";
 import { stageReview } from "../src/pipeline/stage-review.js";
 import { stageTranslate } from "../src/pipeline/stage-translate.js";
 import { stageInteract } from "../src/pipeline/stage-interact.js";
+import { stageBeautify } from "../src/pipeline/stage-beautify.js";
 import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
 import { WORKDIR_LAYOUT } from "../src/utils/file-manager.js";
@@ -132,6 +133,43 @@ if (cmd === "interact") {
   process.exit(r.success ? 0 : 1);
 }
 
+// ─── ptl beautify <file.html> <file.pdf> [--prompt <text>] [--output <path>] [--spec <path>] [--model <model>] ───
+if (cmd === "beautify") {
+  if (Bun.env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = Bun.env.DEEPSEEK_API_KEY;
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: {
+      prompt: { type: "string" },
+      output: { type: "string" },
+      spec: { type: "string", default: "specs/beautify-layout.md" },
+      model: { type: "string", default: "deepseek/deepseek-v4-flash" },
+      report: { type: "string" },
+    },
+    strict: false,
+  });
+  const htmlPath = positionals[0];
+  const pdfPath = positionals[1];
+  if (!htmlPath || !pdfPath) {
+    console.error("Usage: ptl beautify <file.html> <file.pdf> [--prompt <text>] [--output <path>] [--model <model>]");
+    process.exit(1);
+  }
+
+  const outputPath = (values.output as string) ?? htmlPath.replace(/\.html$/, "_beautified.html");
+  const r = await stageBeautify(
+    values.spec as string,
+    htmlPath,
+    pdfPath,
+    outputPath,
+    values.model as string,
+    values.prompt as string | undefined,
+    values.report as string | undefined,
+  );
+  if (!r.success) { console.error(r.error); process.exit(1); }
+  console.log(`Output: ${outputPath}`);
+  process.exit(0);
+}
+
 // ─── ptl check ───
 if (cmd === "check") {
   console.log("pdf-translator environment check\n");
@@ -218,9 +256,16 @@ Commands:
   convert <file.pdf> [--output <path>]            Stage 1: PDF → HTML
   review <file.html> --spec <path> [options]      Stage 2/4: Grill + Goal fix
   translate-blocks <file.html> [options]          Stage 3: Block translation
+  beautify <file.html> <file.pdf> [options]       Post-translation: reference PDF to polish HTML
   interact <file.html> [--output <path>]          Stage 5: Terminal Q&A
   translate <file.pdf> [options]                  Full pipeline (1-5)
   check                                           Environment check
+
+Options for beautify:
+  --prompt <text>              User beautification hints/preferences
+  --output <path>              Output path
+  --spec <path>                Beautify spec (default: specs/beautify-layout.md)
+  --model <model>              LLM model (default: deepseek/deepseek-v4-flash)
 
 Options for translate:
   --direction <en2zh|zh2en>   Direction (default: auto-detect)
