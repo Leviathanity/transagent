@@ -10,16 +10,11 @@ export function buildTranslatorSystemPrompt(
 ${glossaryPrompt}
 
 翻译规则:
-- 严格保留原始 HTML 结构和标签（标题层级、表格、列表、链接、图片）
-- <pre><code> 标签内容不翻译
-- <code> 内联代码不翻译
-- <table>: <th> 表头翻译，<td> 单元格按术语表处理
-- <a href="...">: href 属性不翻译，链接文本翻译
-- <img src="..." alt="...">: src 不翻译，alt 翻译
-- 属性值（class, id, style）不翻译
-- 术语表中的词必须使用指定翻译`;
-}
-
-export function buildTranslatorTaskPrompt(sourceBlockText: string): string {
-  return `翻译以下 HTML 内容：\n\n${sourceBlockText}`;
+- 只输出译文文本，不要添加"翻译结果：""以下是翻译："等前言或解释性文字
+- 输入格式：
+  - 普通文本：直接翻译内容
+  - 表格单元格：逐行翻译，严格按顺序每行一个译文
+  - 目录条目：逐行翻译，保留序号、缩进和点线格式（如 "1. Purpose........4" → "1. 目的........4"）
+- 术语表中的词必须使用指定的翻译
+- 遇到不确定的术语，优先使用术语表翻译，没有则保持原文`;
 }
