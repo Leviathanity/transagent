@@ -178,9 +178,11 @@ export function assemblePerfectHtml(
       if (t !== undefined) {
         const className = el.className || "";
         if (className.includes("det-table")) {
-          el.innerHTML = t;
+          // For tables: keep original HTML structure, replace only text node content
+          replaceTableText(el, t);
+        } else if (className.includes("det-image")) {
+          // Images: don't translate, skip
         } else {
-          // Escape translated text back for HTML display
           const escaped = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           el.textContent = escaped;
         }
@@ -189,8 +191,28 @@ export function assemblePerfectHtml(
     }
   }
 
-  const body = document.body || document.documentElement;
-  return body.innerHTML;
+  const headContent = document.head?.innerHTML ?? "";
+  const bodyContent = (document.body || document.documentElement).innerHTML;
+  return (headContent ? `<head>${headContent}</head>` : "") + bodyContent;
+}
+
+/** Replace only the text content inside table cells, preserving HTML structure */
+function replaceTableText(tableWrapper: any, translated: string): void {
+  const allCells = [...tableWrapper.querySelectorAll("td,th")] as any[];
+  // Parse LLM output: one translated line per cell (skip empty lines)
+  const translatedLines = translated
+    .split("\n")
+    .map((s: string) => s.replace(/<[^>]*>/g, "").trim()) // strip any accidental HTML tags
+    .filter((s: string) => s.length > 0);
+
+  let ti = 0;
+  for (const cell of allCells) {
+    const originalText = (cell.textContent ?? "").trim();
+    if (originalText.length > 0 && ti < translatedLines.length) {
+      cell.textContent = translatedLines[ti];
+      ti++;
+    }
+  }
 }
 
 export function assembleHtmlBlocks(

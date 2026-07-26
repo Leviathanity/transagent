@@ -1,6 +1,7 @@
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent";
 import type { AgentSession } from "@oh-my-pi/pi-coding-agent";
 import { readFile, writeFile } from "node:fs/promises";
+import { parseHTML } from "linkedom";
 import { loadGlossary } from "../glossary/loader.js";
 import { formatForPrompt } from "../glossary/matcher.js";
 import { splitHtmlToBlocks, assembleHtmlBlocks, splitPerfectHtmlToBlocks, assemblePerfectHtml } from "../splitter/html-block-splitter.js";
@@ -19,7 +20,11 @@ async function translateBlock(
     systemPrompt,
   });
   try {
-    await session.prompt(`翻译以下 HTML 内容：\n\n${block.text}`, { toolChoice: "none" });
+    // For tables: send only cell text (one-per-line) to avoid LLM stripping HTML tags
+    const prompt = block.blockType === "table"
+      ? translateTablePrompt(block.text)
+      : `翻译以下 HTML 内容：\n\n${block.text}`;
+    await session.prompt(prompt, { toolChoice: "none" });
     const msg = session.getLastAssistantMessage();
     if (!msg) return block.text;
     for (const part of msg.content) {
@@ -29,6 +34,14 @@ async function translateBlock(
   } finally {
     await session.dispose();
   }
+}
+
+/** Extract cell text from a table HTML string, one cell per line */
+function translateTablePrompt(tableHtml: string): string {
+  const { document } = parseHTML(`<table>${tableHtml}</table>`);
+  const cells = [...document.querySelectorAll("td,th")] as any[];
+  const lines = cells.map((c: any) => (c.textContent ?? "").trim()).filter((t: string) => t.length > 0);
+  return `翻译以下表格的每个单元格内容。严格按顺序逐行输出翻译结果，每行一个单元格译文，不要使用任何 HTML 标签或格式化：\n\n${lines.join("\n")}`;
 }
 
 export async function stageTranslate(
