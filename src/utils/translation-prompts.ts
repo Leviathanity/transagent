@@ -24,7 +24,7 @@ function stripHtml(html: string): string {
 }
 
 /** Build translation prompt for a single paragraph/heading block */
-export function buildParagraphPrompt(text: string): string {
+export function buildTextPrompt(text: string): string {
   const plain = stripHtml(text).trim();
   if (!plain) return "";
   return `将以下内容翻译为目标语言（只输出译文，不要附加任何解释或前言）：\n\n${plain}`;
@@ -32,13 +32,18 @@ export function buildParagraphPrompt(text: string): string {
 
 /** Build translation prompt for a table block — one cell per line */
 export function buildTablePrompt(tableHtml: string): string {
-  const { document } = parseHTML(`<table>${tableHtml}</table>`);
-  const cells = [...document.querySelectorAll("td,th")] as any[];
-  const lines = cells
-    .map((c: any) => (c.textContent ?? "").trim())
-    .filter((t: string) => t.length > 0);
-  if (lines.length === 0) return "";
-  return `将以下表格单元格内容逐行翻译为目标语言（严格按顺序，每行一个译文，不要使用任何 HTML 标签或格式化，不要附加解释）：\n\n${lines.join("\n")}`;
+  try {
+    const wrapper = tableHtml.trim().startsWith("<table") ? tableHtml : `<table>${tableHtml}</table>`;
+    const { document } = parseHTML(wrapper);
+    const cells = document.querySelectorAll("td,th");
+    const lines = [...cells]
+      .map(c => (c.textContent ?? "").trim())
+      .filter(t => t.length > 0);
+    if (lines.length === 0) return "";
+    return `将以下表格单元格内容逐行翻译为目标语言（严格按顺序，每行一个译文，不要使用任何 HTML 标签或格式化，不要附加解释）：\n\n${lines.join("\n")}`;
+  } catch {
+    return "";
+  }
 }
 
 /** Build a grouped translation prompt for multiple TOC entries */
@@ -65,13 +70,13 @@ export function buildBlockPrompt(block: SourceBlock): string {
     case "other":
       return "";
     case "heading":
-      return buildParagraphPrompt(block.text);
+      return buildTextPrompt(block.text);
     case "list":
       return buildListPrompt(block.text);
     case "paragraph":
-      return buildParagraphPrompt(block.text);
+      return buildTextPrompt(block.text);
     default:
-      return buildParagraphPrompt(block.text);
+      return buildTextPrompt(block.text);
   }
 }
 
@@ -86,7 +91,7 @@ export interface TocGroup {
   texts: string[];
 }
 
-export function groupTocBlocks(blocks: { id: string; blockType: string; text: string }[]): TocGroup[] {
+export function groupTocBlocks(blocks: Pick<SourceBlock, "id" | "blockType" | "text">[]): TocGroup[] {
   const groups: TocGroup[] = [];
   let current: TocGroup | null = null;
 
