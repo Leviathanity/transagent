@@ -112,6 +112,7 @@ ${categoryList}
 7. 严禁改变元素的 HTML 标签类型（例如 div↔img 转换），只能调样式和位置
 8. 严禁在 position:absolute 元素内部再嵌套 position:absolute 元素。每个绝对定位的 div 必须是 .page 的直接子元素，不能嵌套在另一个绝对定位 div 内
 9. 严禁合并或删除独立的 position:absolute 元素。每个元素保持独立，不能将其内容合并到另一个元素中，也不能删除任何元素。元素总数不能减少
+10. 修复表格溢出时，只通过 max-width 约束宽度或添加 CSS 规则。严禁修改任何表格元素（det-table）的 top、left、width 或 height 值
 ${fixHintsBlock}
 问题清单（${fixItems.length} 项，全部必须修复）：
 ${fixItems.map(l => l.replace(/^\[.*?\]\s*/, "MUST FIX: ")).join("\n")}`,
@@ -170,6 +171,34 @@ ${fixItems.map(l => l.replace(/^\[.*?\]\s*/, "MUST FIX: ")).join("\n")}`,
     const postGoalCount = (aft.match(/position:absolute/g) || []).length;
     if (postGoalCount < preGoalElemCount) {
       console.log(`  WARNING: Element count decreased from ${preGoalElemCount} to ${postGoalCount}! Agent may have deleted elements.`);
+    }
+
+    // Table position guard: revert tables accidentally moved by Goal agent
+    const origTableTops = [...htmlContent.matchAll(/class="det-table" style="[^"]*top:(\d+)px/g)]
+      .map(m => parseInt(m[1]));
+    const postTableTops = [...aft.matchAll(/class="det-table" style="[^"]*top:(\d+)px/g)]
+      .map(m => parseInt(m[1]));
+
+    let tableFixed = false;
+    for (let ti = 0; ti < Math.min(origTableTops.length, postTableTops.length); ti++) {
+      if (Math.abs(postTableTops[ti] - origTableTops[ti]) > 10) {
+        const newTop = origTableTops[ti];
+        let found = 0;
+        aft = aft.replace(
+          /class="det-table" style="[^"]*top:\d+px/,
+          (match) => {
+            found++;
+            return found === ti + 1
+              ? match.replace(/top:\d+px/, `top:${newTop}px`)
+              : match;
+          }
+        );
+        tableFixed = true;
+      }
+    }
+    if (tableFixed) {
+      await writeFile(inputPath, aft, "utf-8");
+      console.log(`  TablePositionGuard: restored original table positions`);
     }
     console.log(`  Changed: ${aft !== htmlContent ? "YES" : "NO"}`);
   } else {
