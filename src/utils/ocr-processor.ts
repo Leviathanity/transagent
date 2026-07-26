@@ -278,9 +278,17 @@ for pi, blocks in enumerate(pages):
             sty = f"position:absolute;left:{sx1}px;top:{sy1}px;z-index:2;"
             parts.append(f'<div class="det-table" style="{sty}">{ct}</div>')
         elif tp in ("header", "footer", "page_number"):
-            sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;z-index:2;white-space:nowrap;overflow:visible;" + font_sty
-            if tp == "page_number": sty += "text-align:right;"
             safe = ct.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            if "\\n" in ct:
+                cpl = max(1, int(sw / ((fs or 12) * 0.6)))
+                nlines = 0
+                for part in ct.split("\\n"):
+                    nlines += max(1, -(-len(part) // cpl))
+                min_h = int(nlines * (fs or 12) * 1.5)
+                sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;max-height:{min_h}px;z-index:2;white-space:pre-line;overflow:hidden;" + font_sty
+            else:
+                sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;z-index:2;white-space:nowrap;overflow:visible;" + font_sty
+            if tp == "page_number": sty += "text-align:right;"
             parts.append(f'<div style="{sty}">{safe}</div>')
         elif tp == "image":
             sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;height:{sh}px;z-index:2;"
@@ -298,8 +306,16 @@ for pi, blocks in enumerate(pages):
             alt = b.get("content", "").replace('"', "&quot;")
             parts.append(f'<div class="det-image" style="{sty}"><img src="{src}" alt="{alt}" style="width:100%;height:100%;"></div>')
         elif tp == "title":
-            sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;z-index:2;white-space:nowrap;overflow:hidden;" + font_sty
             safe = ct.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            if "\\n" in ct:
+                cpl = max(1, int(sw / ((fs or 12) * 0.6)))
+                nlines = 0
+                for part in ct.split("\\n"):
+                    nlines += max(1, -(-len(part) // cpl))
+                min_h = int(nlines * (fs or 12) * 1.5)
+                sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;max-height:{min_h}px;z-index:2;white-space:pre-line;overflow:hidden;" + font_sty
+            else:
+                sty = f"position:absolute;left:{sx1}px;top:{sy1}px;width:{sw}px;z-index:2;white-space:nowrap;overflow:hidden;" + font_sty
             parts.append(f'<div style="{sty}">{safe}</div>')
         else:
             # No explicit width — let text flow naturally to avoid wrapping-induced overlap
@@ -313,8 +329,8 @@ for pi, blocks in enumerate(pages):
 css = """<style>
 body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
 .page{box-shadow:0 2px 8px rgba(0,0,0,0.15);margin-bottom:24px;}
-.det-table table{border-collapse:collapse;width:auto;}
-.det-table td,.det-table th{border:1px solid #888;padding:3px 6px;font-size:12px;}
+.det-table table{border-collapse:collapse;width:auto;table-layout:fixed;word-wrap:break-word;}
+.det-table td,.det-table th{border:1px solid #888;padding:3px 6px;font-size:12px;overflow-wrap:break-word;}
 .det-table th{background:#e8e8e8;font-weight:bold;}
 .det-image img{max-width:100%;height:auto;}
 </style>"""

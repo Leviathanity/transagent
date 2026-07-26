@@ -1,0 +1,132 @@
+import { parseHTML } from "linkedom";
+
+export interface LintIssue {
+  severity: "error" | "warning" | "info";
+  category: string;
+  subType: string;
+  description: string;
+}
+
+function parsePx(val: string): number {
+  return parseFloat(val.replace("px", ""));
+}
+
+type ElemType = "title" | "header" | "footer" | "page_number" | "table" | "text" | "image";
+
+function classifyElem(fontSize: number, text: string, top: number, left: number, pageH: number, cls: string, nowrap: boolean, pageW: number): ElemType {
+  if (cls.includes("det-table")) return "table";
+  if (cls.includes("det-image")) return "image";
+  if (nowrap && fontSize <= 11 && top < pageH * 0.05) return "header";
+  if (nowrap && fontSize <= 11 && top > pageH * 0.9) return "footer";
+  if (nowrap && fontSize <= 11 && /^\d+$/.test(text.trim())) return "page_number";
+  if (fontSize >= 20) return "title";
+  if (nowrap && fontSize <= 16 && text.length < 30) return "header";
+  return "text";
+}
+
+function overlapType(ta: ElemType, tb: ElemType): string {
+  const order = (a: ElemType, b: ElemType) => [a, b].sort().join("-");
+  const both = order(ta, tb);
+  const titleRelated = both.includes("title");
+  const headerRelated = ta === "header" || tb === "header" || ta === "footer" || tb === "footer" || ta === "page_number" || tb === "page_number";
+  if (titleRelated && headerRelated) return "title-header";
+  if (titleRelated) return "title-content";
+  if (both === "text-text") return "text-text";
+  if (both.includes("table")) return "table-content";
+  if (headerRelated) return "content-header";
+  return "content-content";
+}
+
+const FIX_HINTS: Record<string, string> = {
+  "title-header": "标题与右侧页眉重叠 → 如果标题已有 pre-line 则不改变其 white-space，只调整 max-height 值；如果标题是 white-space:nowrap 才可添加 overflow:hidden+max-height",
+  "title-content": "标题与正文重叠 → 增大标题的 margin-bottom 或下移下一元素的 top",
+  "text-text": "连续正文 OCR 间距不足 → 下移下方的元素（增加 top 值）使间距>=5px",
+  "table-content": "表格与附近内容重叠 → 缩小表格宽度（max-width）或调整附近元素位置",
+  "content-header": "正文与页眉/页码重叠 → 调整页眉/页码位置或下移正文",
+  "content-content": "内容元素重叠 → 调整其中一个元素的 top 或 left 避免碰撞",
+};
+
+export function lintHtml(html: string): LintIssue[] {
+  const issues: LintIssue[] = [];
+  const { document } = parseHTML(html);
+  const pages = [...document.querySelectorAll(".page")] as Element[];
+
+  for (let pi = 0; pi < pages.length; pi++) {
+    const page = pages[pi];
+    const ps = page.getAttribute("style") || "";
+    const pageW = parsePx((ps.match(/width:([\d.]+)px/) || [])[1] || "0");
+    const pageH = parsePx((ps.match(/height:([\d.]+)px/) || [])[1] || "0");
+
+    const els = [...page.querySelectorAll("div[style*='position:absolute']")] as Element[];
+
+    const boxes: { left: number; top: number; right: number; bottom: number; width: number; text: string; cls: string; fsize: number; nowrap: boolean; etype: ElemType }[] = [];
+
+    for (const el of els) {
+      const s = el.getAttribute("style") || "";
+      const left = parsePx((s.match(/left:([\d.]+)px/) || [])[1] || "0");
+      const top = parsePx((s.match(/top:([\d.]+)px/) || [])[1] || "0");
+      const width = parsePx((s.match(/width:([\d.]+)px/) || [])[1] || "0");
+      const nowrap = s.includes("white-space:nowrap");
+      const text = (el.textContent || "").trim();
+      if (!text) continue;
+
+      const cls = el.className || "";
+      const fontSize = parsePx((s.match(/font-size:([\d.]+)px/) || [])[1] || "12");
+      const lh = fontSize * 1.5;
+      const etype = classifyElem(fontSize, text, top, left, pageH, cls, nowrap, pageW);
+
+      let renderW: number;
+      if (nowrap || cls.includes("det-table")) {
+        renderW = text.length * fontSize * 0.55;
+      } else if (width > 0) {
+        renderW = width;
+      } else {
+        renderW = pageW - left;
+      }
+
+      const effW = nowrap && width > 0 ? Math.max(width, text.length * fontSize * 0.55) : (width || renderW);
+      const lines = nowrap ? 1 : Math.max(1, Math.ceil((text.length * fontSize * 0.55) / effW));
+      const renderH = lines * lh;
+
+      boxes.push({ left, top, right: left + effW, bottom: top + renderH, width: effW, text: text.slice(0, 60), cls, fsize: fontSize, nowrap, etype });
+    }
+
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        // Skip same-text overlaps (OCR multi-detection, not real collisions)
+        if (a.text.slice(0, 20) === b.text.slice(0, 20)) continue;
+        const xOverlap = a.left < b.right && a.right > b.left;
+        const yOverlap = a.top < b.bottom && a.bottom > b.top;
+        if (xOverlap && yOverlap) {
+          const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+          if (overlapY > 12) {
+            const st = overlapType(a.etype, b.etype);
+            issues.push({
+              severity: "error",
+              category: "Element overlap",
+              subType: st,
+              description: `Page ${pi + 1}: "${a.text}" ↔ "${b.text}" overlap ${Math.round(overlapY)}px at y≈${Math.round(a.top)}`,
+            });
+          }
+        }
+      }
+    }
+
+    for (const b of boxes) {
+      if (b.right > pageW + 5 && (b.cls.includes("det-table") || (b.width > 0 && !b.text.includes(" ")))) {
+        issues.push({
+          severity: "warning",
+          category: "Page overflow",
+          subType: "overflow",
+          description: `Page ${pi + 1}: "${b.text}" right edge ${Math.round(b.right)}px exceeds page ${Math.round(pageW)}px`,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+export { FIX_HINTS };

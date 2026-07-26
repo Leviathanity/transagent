@@ -1,6 +1,6 @@
 import { readFile, copyFile, writeFile } from "node:fs/promises";
 import { createReviewSession } from "../utils/omp-session.js";
-import { lintHtml } from "../utils/lint.js";
+import { lintHtml, FIX_HINTS } from "../utils/lint.js";
 import type { StageResult } from "../types/pipeline.js";
 
 interface ReviewCategory {
@@ -81,6 +81,24 @@ ${categoryList}
     const fixItems = combined.split("\n").filter(l => l.includes("["));
     console.log(`  Fix phase: Goal — ${fixItems.length} issues`);
 
+    // Group lint issues by subType for fix strategy hints
+    const typeGroups = new Map<string, string[]>();
+    for (const li of lintIssues) {
+      const key = li.subType;
+      if (!typeGroups.has(key)) typeGroups.set(key, []);
+      typeGroups.get(key)!.push(li.description);
+    }
+    const fixHintsBlock = typeGroups.size > 0
+      ? "\n### 重叠类型与修复方案：\n" +
+        [...typeGroups.entries()]
+          .filter(([k]) => FIX_HINTS[k])
+          .map(([k, v]) => `${k}（${v.length} 处）→ ${FIX_HINTS[k]}`)
+          .join("\n")
+      : "";
+
+    // Pre-Goal element count for integrity check
+    const preGoalElemCount = (htmlContent.match(/position:absolute/g) || []).length;
+
     await grillSession.goalRuntime.createGoal({
       objective: `【高优先级】修复文件 ${inputPath} 中的所有布局问题。
 
@@ -92,7 +110,9 @@ ${categoryList}
 5. 修改 CSS 时必须保留所有已存在的规则，只能追加新属性或修改目标属性
 6. 严禁删除任何现有 CSS 规则，否则视为破坏性错误
 7. 严禁改变元素的 HTML 标签类型（例如 div↔img 转换），只能调样式和位置
-
+8. 严禁在 position:absolute 元素内部再嵌套 position:absolute 元素。每个绝对定位的 div 必须是 .page 的直接子元素，不能嵌套在另一个绝对定位 div 内
+9. 严禁合并或删除独立的 position:absolute 元素。每个元素保持独立，不能将其内容合并到另一个元素中，也不能删除任何元素。元素总数不能减少
+${fixHintsBlock}
 问题清单（${fixItems.length} 项，全部必须修复）：
 ${fixItems.map(l => l.replace(/^\[.*?\]\s*/, "MUST FIX: ")).join("\n")}`,
     });
@@ -109,7 +129,48 @@ ${fixItems.map(l => l.replace(/^\[.*?\]\s*/, "MUST FIX: ")).join("\n")}`,
       if (tx) console.log(`  ${tx.slice(0, 300)}`);
       if (r.stopReason === "error") console.log(`  Error: ${(r as any).errorMessage}`);
     }
-    const aft = await readFile(inputPath, "utf-8");
+    // Structural repair: un-nest any position:absolute divs that the agent may have nested
+    let aft = await readFile(inputPath, "utf-8");
+    const structuralIssues = aft.match(/<div[^>]*style="[^"]*position:absolute[^"]*"[^>]*>[\s\S]*?<div[^>]*style="[^"]*position:absolute/g);
+    if (structuralIssues) {
+      // Use string-based structural repair: move any position:absolute div that is
+      // nested inside another position:absolute div up to be a direct child of .page
+      const absDivRe = /<div[^>]*style="[^"]*position:absolute[^"]*"[^>]*>/g;
+      const absCloseRe = /<\/div>/g;
+      // Find pages and fix nesting via simple DOM manipulation
+      const { parseHTML } = await import("linkedom");
+      const { document: d } = parseHTML(aft);
+      const pages = [...d.querySelectorAll(".page")];
+      let fixed = false;
+      for (const page of pages) {
+        const nested = [...page.querySelectorAll("div[style*='position:absolute'] div[style*='position:absolute']")];
+        for (const el of nested) {
+          const parent = el.parentElement!;
+          // Move el before parent's next sibling (or append to page if parent is last child)
+          if (parent.nextSibling) {
+            parent.parentElement!.insertBefore(el, parent.nextSibling);
+          } else {
+            page.appendChild(el);
+          }
+          fixed = true;
+        }
+      }
+      if (fixed) {
+        const serialized = d.toString();
+        const absAfter = (serialized.match(/position:absolute/g) || []).length;
+        const absBefore = (aft.match(/position:absolute/g) || []).length;
+        if (absAfter >= absBefore) {
+          aft = serialized;
+          await writeFile(inputPath, aft, "utf-8");
+          console.log(`  Structural repair: un-nested ${fixed} position:absolute elements`);
+        }
+      }
+    }
+    // Content integrity check
+    const postGoalCount = (aft.match(/position:absolute/g) || []).length;
+    if (postGoalCount < preGoalElemCount) {
+      console.log(`  WARNING: Element count decreased from ${preGoalElemCount} to ${postGoalCount}! Agent may have deleted elements.`);
+    }
     console.log(`  Changed: ${aft !== htmlContent ? "YES" : "NO"}`);
   } else {
     console.log("  No issues found, skipping fix phase");
