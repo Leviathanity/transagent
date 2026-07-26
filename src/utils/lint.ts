@@ -29,6 +29,8 @@ function overlapType(ta: ElemType, tb: ElemType): string {
   const both = order(ta, tb);
   const titleRelated = both.includes("title");
   const headerRelated = ta === "header" || tb === "header" || ta === "footer" || tb === "footer" || ta === "page_number" || tb === "page_number";
+  const imageRelated = ta === "image" || tb === "image";
+  if (imageRelated) return "image-content";
   if (titleRelated && headerRelated) return "title-header";
   if (titleRelated) return "title-content";
   if (both === "text-text") return "text-text";
@@ -38,6 +40,7 @@ function overlapType(ta: ElemType, tb: ElemType): string {
 }
 
 const FIX_HINTS: Record<string, string> = {
+  "image-content": "图片与内容重叠 → 调整图片或相邻元素的 top 值，至少留出 5px 间距",
   "title-header": "标题与右侧页眉重叠 → 如果标题已有 pre-line 则不改变其 white-space，只调整 max-height 值；如果标题是 white-space:nowrap 才可添加 overflow:hidden+max-height",
   "title-content": "标题与正文重叠 → 增大标题的 margin-bottom 或下移下一元素的 top",
   "text-text": "连续正文 OCR 间距不足 → 下移下方的元素（增加 top 值）使间距>=5px",
@@ -66,11 +69,16 @@ export function lintHtml(html: string): LintIssue[] {
       const left = parsePx((s.match(/left:([\d.]+)px/) || [])[1] || "0");
       const top = parsePx((s.match(/top:([\d.]+)px/) || [])[1] || "0");
       const width = parsePx((s.match(/width:([\d.]+)px/) || [])[1] || "0");
+      const height = parsePx((s.match(/height:([\d.]+)px/) || [])[1] || "0");
       const nowrap = s.includes("white-space:nowrap");
-      const text = (el.textContent || "").trim();
-      if (!text) continue;
-
+      let text = (el.textContent || "").trim();
       const cls = el.className || "";
+      // linkedom ignores <img> alt in textContent — extract manually
+      if (!text && cls.includes("det-image")) {
+        const img = el.querySelector("img");
+        text = (img?.getAttribute("alt") || "IMAGE").trim();
+      }
+      if (!text) continue;
       const fontSize = parsePx((s.match(/font-size:([\d.]+)px/) || [])[1] || "12");
       const lh = fontSize * 1.5;
       const etype = classifyElem(fontSize, text, top, left, pageH, cls, nowrap, pageW);
@@ -86,7 +94,8 @@ export function lintHtml(html: string): LintIssue[] {
 
       const effW = nowrap && width > 0 ? Math.max(width, text.length * fontSize * 0.55) : (width || renderW);
       const lines = nowrap ? 1 : Math.max(1, Math.ceil((text.length * fontSize * 0.55) / effW));
-      const renderH = lines * lh;
+      // Use explicit height for images (their textContent is just alt text)
+      const renderH = (height > 0 && etype === "image") ? height : lines * lh;
 
       boxes.push({ left, top, right: left + effW, bottom: top + renderH, width: effW, text: text.slice(0, 60), cls, fsize: fontSize, nowrap, etype });
     }
@@ -101,7 +110,7 @@ export function lintHtml(html: string): LintIssue[] {
         const yOverlap = a.top < b.bottom && a.bottom > b.top;
         if (xOverlap && yOverlap) {
           const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-          if (overlapY > 12) {
+          if (overlapY > 5) {
             const st = overlapType(a.etype, b.etype);
             issues.push({
               severity: "error",
