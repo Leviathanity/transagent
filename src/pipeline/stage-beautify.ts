@@ -301,11 +301,16 @@ export async function stageBeautify(
 - 严禁修改任何 HTML 元素、标签、position 值或文本内容
 - 特别注意：如果风格指南要求调整页边距，应该通过 CSS padding/margin 实现，不要改动 left/top inline 值
 - 只有用户显式请求 HTML 编辑时才可例外`
-    : "\n注意：用户提示中提到了 HTML 元素修改需求，你可以在此基础上适当调整 HTML 结构，但必须保持元素独立性和结构完整性。";
+    : `\nHTML 编辑已启用（用户要求）：
+- 你可以修改 HTML 元素的 inline style 中 left、width、top、height 等位置值
+- 例如：将右侧元素的 left 减少 20px，或 width 减少 20px，使其远离页面右边框
+- 只修改需要调整的目标元素，其他元素保持不变
+- 必须保持元素独立性（不合并、不删除、不嵌套）
+- 每次 edit 后 read 验证位置是否达到预期效果`;
 
   await session.goalRuntime.createGoal({
-    objective: `将以下 CSS 风格指南应用到文件 ${htmlPath} 的 <style> 块中，使翻译后的 HTML 视觉效果接近原始 PDF。
-
+    objective: `将以下 CSS 风格指南应用到文件 ${htmlPath} 中，使翻译后的 HTML 视觉效果接近原始 PDF。
+${userPrompt ? `\n### 用户特殊要求（必须优先执行）\n${userPrompt}\n` : ""}
 ## CSS 风格指南
 \`\`\`css
 ${styleGuide}
@@ -323,8 +328,44 @@ ${styleGuide}
   await session.prompt("开始应用 CSS 风格指南。只修改 <style> 块，不触碰 HTML 元素。");
   await session.waitForIdle();
 
-  // Post-Goal structural safety
+  // Post-Goal: programmatic right-edge adjustment (when user requested HTML edits)
   let aft = await readFile(htmlPath, "utf-8");
+  if (allowHtmlEdit) {
+    let moved = 0;
+    // Adjust items WITH explicit width
+    aft = aft.replace(
+      /(<div )class="near-right" style="([^"]*left:)(\d+)(px[^"]*width:)(\d+)(px[^"]*")/g,
+      (match, prefix, beforeLeft, leftStr, middle, widthStr, suffix) => {
+        const left = parseInt(leftStr);
+        const width = parseInt(widthStr);
+        if (left + width > 870 && left + width < 1024) {
+          moved++;
+          return `${prefix}class="near-right" style="${beforeLeft}${Math.max(0, left - 18)}${middle}${widthStr}${suffix}`;
+        }
+        return match;
+      }
+    );
+    // Adjust items WITHOUT explicit width (use right-edge inline left only)
+    if (moved === 0) {
+      aft = aft.replace(
+        /(<div )class="near-right" style="([^"]*left:)(\d+)(px[^"]*")/g,
+        (match, prefix, beforeLeft, leftStr, suffix) => {
+          const left = parseInt(leftStr);
+          if (left > 680 && left < 1024) {
+            moved++;
+            return `${prefix}class="near-right" style="${beforeLeft}${Math.max(0, left - 18)}${suffix}`;
+          }
+          return match;
+        }
+      );
+    }
+    if (moved > 0) {
+      await writeFile(htmlPath, aft, "utf-8");
+      console.log(`  RightEdgeAdjust: moved ${moved} elements ${18}px left`);
+    }
+  }
+
+  // Post-Goal structural safety
   const structuralIssues = aft.match(/<div[^>]*style="[^"]*position:absolute[^"]*"[^>]*>[\s\S]*?<div[^>]*style="[^"]*position:absolute/g);
   if (structuralIssues) {
     const { document: d } = parseHTML(aft);
