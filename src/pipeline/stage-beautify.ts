@@ -109,84 +109,55 @@ function parseHtmlLayout(html: string): string {
   return JSON.stringify(results, null, 2);
 }
 
-/** Generate layout comparison report for LLM consumption */
-function generateDiffReport(pdfJson: string, htmlJson: string, userPrompt?: string): string {
+/** Generate a layout diff summary for style guide generation */
+function generateLayoutSummary(pdfJson: string, htmlJson: string): string {
   const pdfData = JSON.parse(pdfJson);
   const htmlData = JSON.parse(htmlJson);
-
   const lines: string[] = [];
-  lines.push("## Layout Comparison Report: Translated HTML vs Original PDF");
+
+  lines.push("## Original PDF Layout Characteristics");
   lines.push("");
 
-  if (userPrompt) {
-    lines.push("### User Guidance");
-    lines.push(userPrompt);
-    lines.push("");
+  // Collect PDF-wide font statistics
+  const pdfFonts = new Set<string>();
+  const pdfSizes = new Set<number>();
+  const pdfColors = new Set<string>();
+  const pdfBolds = new Set<string>();
+
+  for (const page of pdfData) {
+    for (const el of page.elements) {
+      if (el.font) pdfFonts.add(el.font);
+      if (el.size) pdfSizes.add(el.size);
+      if (el.color && el.color !== "black") pdfColors.add(el.color);
+      if (el.bold) pdfBolds.add(el.text.slice(0, 30));
+    }
   }
 
-  let totalFontMismatches = 0;
-  let totalSizeMismatches = 0;
-  let totalBoldMismatches = 0;
+  lines.push(`### Fonts used: ${[...pdfFonts].join(", ")}`);
+  lines.push(`### Font sizes: ${[...pdfSizes].sort((a,b)=>b-a).join(", ")}px`);
+  lines.push(`### Accent colors: ${[...pdfColors].join(", ")}`);
+  lines.push("");
 
+  // Per-page layout observations
   for (const pdfPage of pdfData) {
     const htmlPage = htmlData.find((p: any) => p.page === pdfPage.page);
     if (!htmlPage) continue;
 
-    const pdfEls = pdfPage.elements;
-    const htmlEls = htmlPage.elements;
-
-    // Match PDF elements to HTML elements by position proximity
-    for (const pe of pdfEls) {
+    const diffs: string[] = [];
+    for (const pe of pdfPage.elements) {
       let bestMatch: any = null;
       let bestDist = Infinity;
-      for (const he of htmlEls) {
-        const dx = pe.x - he.x;
-        const dy = pe.y - he.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 50 && dist < bestDist) {
-          bestDist = dist;
-          bestMatch = he;
-        }
+      for (const he of htmlPage.elements) {
+        const dist = Math.sqrt((pe.x - he.x) ** 2 + (pe.y - he.y) ** 2);
+        if (dist < 50 && dist < bestDist) { bestDist = dist; bestMatch = he; }
       }
-
       if (bestMatch) {
-        const diffs: string[] = [];
-        if (pe.bold !== bestMatch.bold) {
-          diffs.push(`font-weight: ${pe.bold ? "bold" : "normal"} (pdf) vs ${bestMatch.bold ? "bold" : "normal"} (html)`);
-          totalBoldMismatches++;
-        }
-        if (Math.abs(pe.size - bestMatch.fontSize) > 1) {
-          diffs.push(`font-size: ${pe.size}px (pdf) vs ${bestMatch.fontSize}px (html)`);
-          totalSizeMismatches++;
-        }
-        if (pe.font && bestMatch.fontFamily && !bestMatch.fontFamily.includes(pe.font.split(",")[0])) {
-          diffs.push(`font: ${pe.font} (pdf) vs ${bestMatch.fontFamily} (html)`);
-          totalFontMismatches++;
-        }
-        if (diffs.length > 0) {
-          lines.push(`- P${pdfPage.page} "${pe.text}" → ${diffs.join(", ")}`);
-        }
+        if (pe.bold !== bestMatch.bold) diffs.push(`"${pe.text.slice(0,20)}" should be ${pe.bold?"bold":"normal"}`);
+        if (!bestMatch.color.includes(pe.color.replace("#","")) && pe.color !== "black") diffs.push(`"${pe.text.slice(0,20)}" should be ${pe.color}`);
       }
     }
-
-    // Check for significant gaps/overlaps between consecutive elements
-    const sorted = [...htmlEls].sort((a: any, b: any) => a.y - b.y || a.x - b.x);
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = sorted[i - 1];
-      const curr = sorted[i];
-      const gap = curr.y - (prev.y + prev.h);
-      if (gap > 30 && prev.h < 30 && curr.h < 30 && prev.x < curr.x + curr.w && prev.x + prev.w > curr.x) {
-        lines.push(`- P${pdfPage.page} gap: "${prev.text}" → "${curr.text}" gap=${gap}px`);
-      }
-    }
+    if (diffs.length > 0) lines.push(`### Page ${pdfPage.page}: ${diffs.join("; ")}`);
   }
-
-  lines.push("");
-  lines.push("### Summary");
-  lines.push(`- Font mismatches: ${totalFontMismatches}`);
-  lines.push(`- Size mismatches: ${totalSizeMismatches}`);
-  lines.push(`- Bold/weight mismatches: ${totalBoldMismatches}`);
-  lines.push("");
 
   return lines.join("\n");
 }
@@ -200,7 +171,6 @@ export async function stageBeautify(
   userPrompt?: string,
   reportPath?: string,
 ): Promise<StageResult> {
-  const specContent = await readFile(specPath, "utf-8");
   const reportFile = reportPath ?? htmlPath.replace(/\.html$/, "_beautify_report.md");
 
   console.log("  Extracting PDF layout metadata...");
@@ -210,130 +180,142 @@ export async function stageBeautify(
   const htmlContent = await readFile(htmlPath, "utf-8");
   const htmlLayout = parseHtmlLayout(htmlContent);
 
-  // Lint phase
-  const lintIssues = lintHtml(htmlContent);
-  console.log(`  Lint: ${lintIssues.length} geometric issues`);
+  const layoutSummary = generateLayoutSummary(pdfLayout, htmlLayout);
+  await writeFile(reportFile, layoutSummary, "utf-8");
 
-  // Diff report
-  const diffReport = generateDiffReport(pdfLayout, htmlLayout, userPrompt);
+  // Determine if user explicitly requests HTML element edits
+  const allowHtmlEdit = userPrompt
+    ? /移动|调整位置|修改.*元素|改变.*结构|修改.*html|元素.*位置|top|left|width|height/.test(userPrompt.toLowerCase())
+    : false;
 
-  // Combine lint issues + diff report
-  const lintText = lintIssues
-    .map((li) => `[${li.severity}] ${li.category} - ${li.description}`)
-    .join("\n");
+  // Grill: generate style guide
+  const session = await createBeautifySession(model, userPrompt, allowHtmlEdit);
 
-  const combined = [diffReport, lintText ? "\n### Lint Issues\n" + lintText : ""].filter(Boolean).join("\n");
-  await writeFile(reportFile, combined, "utf-8");
-
-  // Grill phase
-  const session = await createBeautifySession(specContent, model, userPrompt);
-  const categoryList = "1. Font consistency\n2. Text fitting & wrapping\n3. Spacing & alignment\n4. Table styling\n5. Color & contrast\n6. Image quality\n7. Overall polish";
+  console.log(`  Grill: generating style guide (html edits: ${allowHtmlEdit ? "allowed" : "forbidden"})...`);
 
   await session.prompt(
-    `按以下规范审查文件 ${htmlPath}。布局对比报告见 ${reportFile}，你可以 read 查看。
+    `你是一名 CSS 设计专家。阅读布局报告 ${reportFile}，对比原始 PDF 和翻译后的 HTML。
 
-规范类别:
-${categoryList}
+## 任务：生成统一风格指南
 
-审查完成后，在回复中输出格式如下的问题清单（每行一条），如果没有任何问题则只输出"无问题"：
+分析原始 PDF 的设计特征（字体、字号、颜色、表格样式、行间距），生成一套 CSS 规则，应用到翻译后的 HTML 上使其视觉一致性最大化。
 
-[severity] category - description`,
+要求：
+1. 只输出 CSS 规则（<style> 块内的内容），不要包含 HTML 标签修改建议
+2. 针对页面级别的样式：body 背景、body 字体、.page 阴影
+3. 针对表格：.det-table 的边框颜色、内边距、表头背景色、单元格字体大小
+4. 针对图片：.det-image 的最大宽度、对齐方式
+5. 保持与原始 PDF 一致的设计语言：字号层级、颜色方案、间距模式
+6. 规则要通用，适用于所有页面，不能依赖特定页面的元素
+
+输出格式：只输出纯 CSS 代码块，用 \`\`\`css 包裹，不要任何解释性文字。`,
   );
-  const grillMsg = session.getLastAssistantMessage();
 
-  let allIssues = diffReport + "\n";
+  const grillMsg = session.getLastAssistantMessage();
+  let styleGuide = "";
   if (grillMsg) {
     for (const part of grillMsg.content) {
-      if (part.type === "text") allIssues += part.text + "\n";
-    }
-  }
-
-  const hasIssues = allIssues.includes("[");
-  await writeFile(reportFile, allIssues, "utf-8");
-
-  // Goal fix phase
-  if (hasIssues) {
-    const fixItems = allIssues.split("\n").filter(l => l.includes("["));
-    console.log(`  Fix: ${fixItems.length} issues`);
-
-    const preGoalCount = (htmlContent.match(/position:absolute/g) || []).length;
-
-    await session.goalRuntime.createGoal({
-      objective: `对文件 ${htmlPath} 进行布局美化，参考原 PDF 的布局元数据使 HTML 视觉效果尽可能接近原文件。
-
-要求（必须严格遵守）：
-1. 参考布局对比报告中的元素级差异（font/size/bold/color）
-2. 逐一修复，每次 edit 后用 read 验证
-3. 不允许在还有问题未修复时调用 complete
-4. 只修改目标元素的内联样式或 CSS 规则，不允许替换或删除完整 <style> 块
-5. 修改 CSS 时保留已有规则，只能追加或修改目标属性
-6. 严禁删除现有 CSS 规则
-7. 严禁改变 HTML 标签类型
-8. 严禁在 position:absolute 内嵌套 position:absolute
-9. 严禁合并或删除独立元素${userPrompt ? `\n\n用户美化意见（优先遵循）：\n${userPrompt}` : ""}
-
-问题清单（${fixItems.length} 项，全部修复）：
-${fixItems.map(l => l.replace(/^\[.*?\]\s*/, "MUST FIX: ")).join("\n")}`,
-    });
-
-    await session.prompt(`开始美化。共 ${fixItems.length} 个问题，逐项修完再 complete。`);
-    await session.waitForIdle();
-
-    // Structural repair
-    let aft = await readFile(htmlPath, "utf-8");
-    const structuralIssues = aft.match(/<div[^>]*style="[^"]*position:absolute[^"]*"[^>]*>[\s\S]*?<div[^>]*style="[^"]*position:absolute/g);
-    if (structuralIssues) {
-      const { document: d } = parseHTML(aft);
-      const pages = [...d.querySelectorAll(".page")];
-      for (const page of pages) {
-        const nested = [...page.querySelectorAll("div[style*='position:absolute'] div[style*='position:absolute']")];
-        for (const el of nested) {
-          const parent = el.parentElement!;
-          if (parent.nextSibling) {
-            parent.parentElement!.insertBefore(el, parent.nextSibling);
-          } else {
-            page.appendChild(el);
-          }
+      if (part.type === "text") {
+        // Extract CSS from code block
+        const cssMatch = part.text.match(/```css\s*([\s\S]*?)```/);
+        if (cssMatch) {
+          styleGuide = cssMatch[1].trim();
+        } else {
+          // Fallback: use the raw text if it looks like CSS
+          styleGuide = part.text.trim();
         }
       }
-      aft = d.toString();
     }
-
-    const postGoalCount = (aft.match(/position:absolute/g) || []).length;
-    if (postGoalCount < preGoalCount) {
-      console.log(`  WARNING: Elements lost (${preGoalCount}→${postGoalCount})`);
-    }
-
-    const changed = aft !== htmlContent;
-    if (changed) await writeFile(htmlPath, aft, "utf-8");
-    console.log(`  Changed: ${changed ? "YES" : "NO"}`);
   }
+
+  if (!styleGuide) {
+    console.log("  Grill returned no style guide, skipping fix phase");
+    await session.dispose();
+    await copyFile(htmlPath, outputPath);
+    return { stage: "beautify", success: true, outputPath };
+  }
+
+  await writeFile(reportFile, layoutSummary + "\n\n## Generated Style Guide\n```css\n" + styleGuide + "\n```", "utf-8");
+  console.log(`  Style guide: ${styleGuide.split("\n").length} lines of CSS`);
+
+  // Goal: apply style guide (CSS-only by default)
+  const cssEditOnly = !allowHtmlEdit
+    ? "\n核心约束（CSS-Only 模式）：你只能修改 <style> 块内的 CSS 规则。严禁修改任何 HTML 元素、标签、position 值或文本内容。如果用户提示涉及 HTML 修改才可例外。"
+    : "\n注意：用户提示中提到了 HTML 元素修改需求，你可以在此基础上适当调整 HTML 结构，但必须保持元素独立性和结构完整性。";
+
+  await session.goalRuntime.createGoal({
+    objective: `将以下 CSS 风格指南应用到文件 ${htmlPath} 的 <style> 块中，使翻译后的 HTML 视觉效果接近原始 PDF。
+
+## CSS 风格指南
+\`\`\`css
+${styleGuide}
+\`\`\`
+
+要求：
+1. 读取目标 HTML 文件的 <style> 块
+2. 对比风格指南，逐条检查 CSS 规则是否需要修改或新增
+3. 只修改 <style> 块内的 CSS 规则，保留所有已存在的样式值
+4. 新增规则追加到文件末尾，修改规则只改目标属性
+5. 修改后用 read 验证
+6. 全部完成后调用 complete${cssEditOnly}`,
+  });
+
+  await session.prompt("开始应用 CSS 风格指南。只修改 <style> 块，不触碰 HTML 元素。");
+  await session.waitForIdle();
+
+  // Post-Goal structural safety
+  let aft = await readFile(htmlPath, "utf-8");
+  const structuralIssues = aft.match(/<div[^>]*style="[^"]*position:absolute[^"]*"[^>]*>[\s\S]*?<div[^>]*style="[^"]*position:absolute/g);
+  if (structuralIssues) {
+    const { document: d } = parseHTML(aft);
+    const pages = [...d.querySelectorAll(".page")];
+    for (const page of pages) {
+      const nested = [...page.querySelectorAll("div[style*='position:absolute'] div[style*='position:absolute']")];
+      for (const el of nested) {
+        const parent = el.parentElement!;
+        if (parent.nextSibling) {
+          parent.parentElement!.insertBefore(el, parent.nextSibling);
+        } else {
+          page.appendChild(el);
+        }
+      }
+    }
+    aft = d.toString();
+  }
+
+  const changed = aft !== htmlContent;
+  if (changed) await writeFile(htmlPath, aft, "utf-8");
+  console.log(`  Changed: ${changed ? "YES" : "NO"}`);
 
   await session.dispose();
   await copyFile(htmlPath, outputPath);
   return { stage: "beautify", success: true, outputPath };
 }
 
-async function createBeautifySession(specContent: string, model: string, userPrompt?: string) {
+async function createBeautifySession(model: string, userPrompt?: string, allowHtmlEdit?: boolean) {
   const userSection = userPrompt
-    ? `\n## 用户美化意见\n用户提供了以下美化偏好，请优先考虑：\n${userPrompt}\n`
+    ? `\n## 用户意见\n${userPrompt}\n`
     : "";
+
+  const htmlDisclaimer = !allowHtmlEdit
+    ? "\n注意：默认情况下你只能生成 CSS 规则。不要建议修改 HTML 结构、元素位置或标签类型。"
+    : "\n用户已授权 HTML 元素修改，你可以适当建议结构调整，但要保持元素独立性。";
 
   const { session } = await (await import("@oh-my-pi/pi-coding-agent")).createAgentSession({
     modelPattern: model,
-    systemPrompt: `你是一个文档美化专家。你需要对比翻译后的 HTML 和原始 PDF 的布局元数据，修正视觉差异。
+    systemPrompt: `你是一个 CSS 设计专家。你的任务是根据原始 PDF 的设计特征，为翻译后的 HTML 生成统一的 CSS 风格指南。
 
-## 审查规范
-${specContent}
-
+## 设计原则
+- 从 PDF 中提取字体族、字号层级、颜色方案
+- 保持表格边框样式（颜色、宽度、内边距）与 PDF 一致
+- 确保所有页面视觉一致——同类元素使用相同样式
+- 只输出 CSS 规则，不修改 HTML 结构
+${htmlDisclaimer}
 ${userSection}
-## 工作方式
-1. 先用 read 读取布局对比报告（保存在 --report 指定的文件中）
-2. 按规范逐类检查差异
-3. 只记录问题，不要修改文件
-4. 每个发现的差异记录为：[severity] category - description
-
-严重度: error（必须修复）/ warning（建议修复）/ info（可忽略）`,
+## 输出要求
+- 只输出纯 CSS 代码，用 \`\`\`css 包裹
+- 不要包含 HTML 修改建议或解释文字
+- 规则要通用，适用于所有页面`,
   });
   return session;
 }
