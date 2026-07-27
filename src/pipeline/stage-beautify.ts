@@ -255,10 +255,9 @@ export async function stageBeautify(
     : false;
 
   // Grill: generate style guide
-  const session = await createBeautifySession(model, userPrompt, allowHtmlEdit);
+  const session = await createBeautifySession(model, userPrompt);
 
-  const modeLabel = allowHtmlEdit ? "allowed" : "forbidden";
-  console.log(`  Grill: generating style guide (html edits: ${modeLabel})...`);
+  console.log(`  Grill: generating style guide...`);
 
   const grillPrompt = [
     "你是一名 CSS 设计专家。阅读布局报告 " + reportFile + "，对比原始 PDF 和翻译后的 HTML。",
@@ -312,63 +311,45 @@ export async function stageBeautify(
   await writeFile(reportFile, layoutSummary + "\n\n## Generated Style Guide\n```css\n" + styleGuide + "\n```", "utf-8");
   console.log(`  Style guide: ${styleGuide.split("\n").length} lines of CSS`);
 
-  // Goal: apply style guide (CSS-only by default)
-  const cssEditOnly = !allowHtmlEdit
-    ? `\n核心约束（CSS-Only 模式）：
-- 只能修改 <style> 块内的 CSS 规则
-- 严禁修改任何 HTML 元素、标签、position 值或文本内容
-- 特别注意：如果风格指南要求调整页边距，应该通过 CSS padding/margin 实现，不要改动 left/top inline 值
-- 只有用户显式请求 HTML 编辑时才可例外`
-    : `\nHTML 编辑已启用（用户要求）：
-- 你可以修改 HTML 元素的 inline style 中 left、width、top、height 等位置值
-- 例如：将右侧元素的 left 减少 20px，或 width 减少 20px，使其远离页面右边框
-- 只修改需要调整的目标元素，其他元素保持不变
-- 必须保持元素独立性（不合并、不删除、不嵌套）
-- 每次 edit 后 read 验证位置是否达到预期效果`;
-
-  await session.goalRuntime.createGoal({
-    objective: `将以下 CSS 风格指南应用到文件 ${htmlPath} 中，使翻译后的 HTML 视觉效果接近原始 PDF。
-${userPrompt ? `\n### 用户特殊要求（必须优先执行）\n${userPrompt}\n` : ""}
-## CSS 风格指南
-\`\`\`css
-${styleGuide}
-\`\`\`
-
-要求：
-1. 读取目标 HTML 文件的 <style> 块
-2. 对比风格指南，逐条检查 CSS 规则是否需要修改或新增
-3. 只修改 <style> 块内的 CSS 规则，保留所有已存在的样式值
-4. 新增规则追加到文件末尾，修改规则只改目标属性
-5. 修改后用 read 验证
-6. 全部完成后调用 complete${cssEditOnly}`,
-  });
-
-  await session.prompt("开始应用 CSS 风格指南。只修改 <style> 块，不触碰 HTML 元素。");
-  await session.waitForIdle();
-
-  // Post-Goal: programmatic right-edge adjustment (when user requested HTML edits)
+  // ── CODE: inject Grill's CSS directly into <style> block ──
   let aft = await readFile(htmlPath, "utf-8");
+  const headMatch = aft.match(/(<style>)([\s\S]*?)(<\/style>)/i);
+  if (headMatch) {
+    // Append new rules after existing ones, preserve originals
+    aft = aft.replace(headMatch[0], headMatch[1] + headMatch[2] + "\n" + styleGuide + "\n" + headMatch[3]);
+  } else {
+    // No <style> block: inject one before the page content
+    const headEnd = aft.indexOf("</head>");
+    if (headEnd > 0) {
+      aft = aft.slice(0, headEnd) + "<style>\n" + styleGuide + "\n</style>\n" + aft.slice(headEnd);
+    } else {
+      aft = "<style>\n" + styleGuide + "\n</style>\n" + aft;
+    }
+  }
+  await writeFile(htmlPath, aft, "utf-8");
+  console.log("  Applied style guide to <style> block (code injection)");
+
+  await session.dispose();
+
+  // ── Post-process: right-edge adjustment (when user requested HTML edits) ──
   if (allowHtmlEdit) {
     let moved = 0;
-    // Adjust ALL near-right elements: reduce left by 18px
     aft = aft.replace(
-      /(<div class="[^"]*near-right[^"]* style="[^"]*left:)(\d+)(px[^"]*")/g,
-      (match, beforeLeft, leftStr, suffix) => {
+      /(<div class="[^"]*near-right[^"]*)" style="([^"]*left:)(\d+)(px[^"]*")/g,
+      (match, prefix, beforeLeft, leftStr, suffix) => {
         const left = parseInt(leftStr);
-        if (left >= 100) {
-          moved++;
-          return `${beforeLeft}${left - 18}${suffix}`;
-        }
+        if (left >= 100) {           moved++;
+          return `${prefix}" style="${beforeLeft}${left - 16}${suffix}`; }
         return match;
       }
     );
     if (moved > 0) {
       await writeFile(htmlPath, aft, "utf-8");
-      console.log(`  RightEdgeAdjust: moved ${moved} elements ${18}px left`);
+      console.log(`  RightEdgeAdjust: moved ${moved} elements 16px left`);
     }
   }
 
-  // Post-Goal structural safety
+  // ── Structural safety check ──
   const structuralIssues = aft.match(/<div[^>]*style="[^"]*position:absolute[^"]*"[^>]*>[\s\S]*?<div[^>]*style="[^"]*position:absolute/g);
   if (structuralIssues) {
     const { document: d } = parseHTML(aft);
@@ -377,11 +358,8 @@ ${styleGuide}
       const nested = [...page.querySelectorAll("div[style*='position:absolute'] div[style*='position:absolute']")];
       for (const el of nested) {
         const parent = el.parentElement!;
-        if (parent.nextSibling) {
-          parent.parentElement!.insertBefore(el, parent.nextSibling);
-        } else {
-          page.appendChild(el);
-        }
+        if (parent.nextSibling) { parent.parentElement!.insertBefore(el, parent.nextSibling); }
+        else { page.appendChild(el); }
       }
     }
     aft = d.toString();
@@ -391,19 +369,14 @@ ${styleGuide}
   if (changed) await writeFile(htmlPath, aft, "utf-8");
   console.log(`  Changed: ${changed ? "YES" : "NO"}`);
 
-  await session.dispose();
   await copyFile(htmlPath, outputPath);
   return { stage: "beautify", success: true, outputPath };
 }
 
-async function createBeautifySession(model: string, userPrompt?: string, allowHtmlEdit?: boolean) {
+async function createBeautifySession(model: string, userPrompt?: string) {
   const userSection = userPrompt
     ? `\n## 用户意见\n${userPrompt}\n`
     : "";
-
-  const htmlDisclaimer = !allowHtmlEdit
-    ? "\n注意：默认情况下你只能生成 CSS 规则。不要建议修改 HTML 结构、元素位置或标签类型。"
-    : "\n用户已授权 HTML 元素修改，你可以适当建议结构调整，但要保持元素独立性。";
 
   const { session } = await (await import("@oh-my-pi/pi-coding-agent")).createAgentSession({
     modelPattern: model,
@@ -414,7 +387,6 @@ async function createBeautifySession(model: string, userPrompt?: string, allowHt
 - 保持表格边框样式（颜色、宽度、内边距）与 PDF 一致
 - 确保所有页面视觉一致——同类元素使用相同样式
 - 只输出 CSS 规则，不修改 HTML 结构
-${htmlDisclaimer}
 ${userSection}
 ## 输出要求
 - 只输出纯 CSS 代码，用 \`\`\`css 包裹
