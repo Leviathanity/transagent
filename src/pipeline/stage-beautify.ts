@@ -148,19 +148,20 @@ function generateLayoutSummary(pdfJson: string, htmlJson: string): string {
     for (const he of htmlPage.elements) {
       const fromRight = 1024 - (he.x + he.w);
       const fromTop = he.y;
-      if (fromRight < 30 && fromRight > 0 && he.text.length > 2) {
-        rightEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,20)}" right=${fromRight}px from edge`);
+      if (fromRight < 150 && fromRight > 0 && he.text.length > 2) {
+        rightEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,25)}" right=${fromRight}px from edge, left=${he.x} w=${he.w}`);
       }
       if (fromTop < 30 && fromTop > 0 && he.text.length > 2) {
-        topEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,20)}" top=${fromTop}px from edge`);
+        topEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,25)}" top=${fromTop}px from edge`);
       }
     }
   }
 
   if (rightEdgeElements.length > 0) {
-    lines.push(`### Right-edge proximity (${rightEdgeElements.length} elements near page right border):`);
-    for (const e of rightEdgeElements.slice(0, 8)) lines.push(`- ${e}`);
-    if (rightEdgeElements.length > 8) lines.push(`- ... and ${rightEdgeElements.length - 8} more`);
+    lines.push(`### Right-edge proximity (${rightEdgeElements.length} elements within 150px of right border):`);
+    lines.push("These elements need padding-right or margin-right to breathe. Use CSS selector `.near-right` to target them.");
+    for (const e of rightEdgeElements.slice(0, 10)) lines.push(`- ${e}`);
+    if (rightEdgeElements.length > 10) lines.push(`- ... and ${rightEdgeElements.length - 10} more`);
     lines.push("");
   }
 
@@ -203,8 +204,29 @@ export async function stageBeautify(
   const pdfLayout = await extractPdfLayout(pdfPath);
 
   console.log("  Parsing HTML layout...");
-  const htmlContent = await readFile(htmlPath, "utf-8");
+  let htmlContent = await readFile(htmlPath, "utf-8");
   const htmlLayout = parseHtmlLayout(htmlContent);
+
+  // Pre-process: add .near-right class to elements close to the right page edge
+  let added = 0;
+  htmlContent = htmlContent.replace(
+    /(<div )style="([^"]*left:(\d+)px[^"]*top:(\d+)px[^"]*width:(\d+)px[^"]*)"/g,
+    (match, prefix, styleContent, leftStr, topStr, widthStr) => {
+      const left = parseInt(leftStr);
+      const width = parseInt(widthStr);
+      const right = left + (width || 200);
+      // Only add class if this is a right-edge element without existing class
+      if (right > 870 && right < 1024 && !match.includes('class="')) {
+        added++;
+        return `${prefix}class="near-right" style="${styleContent}"`;
+      }
+      return match;
+    }
+  );
+  if (added > 0) {
+    await writeFile(htmlPath, htmlContent, "utf-8");
+    console.log(`  Added .near-right class to ${added} right-edge elements`);
+  }
 
   const layoutSummary = generateLayoutSummary(pdfLayout, htmlLayout);
   await writeFile(reportFile, layoutSummary, "utf-8");
@@ -217,30 +239,33 @@ export async function stageBeautify(
   // Grill: generate style guide
   const session = await createBeautifySession(model, userPrompt, allowHtmlEdit);
 
-  console.log(`  Grill: generating style guide (html edits: ${allowHtmlEdit ? "allowed" : "forbidden"})...`);
+  const modeLabel = allowHtmlEdit ? "allowed" : "forbidden";
+  console.log(`  Grill: generating style guide (html edits: ${modeLabel})...`);
 
-  await session.prompt(
-    `你是一名 CSS 设计专家。阅读布局报告 ${reportFile}，对比原始 PDF 和翻译后的 HTML。
+  const grillPrompt = [
+    "你是一名 CSS 设计专家。阅读布局报告 " + reportFile + "，对比原始 PDF 和翻译后的 HTML。",
+    "",
+    "## 任务：生成统一风格指南",
+    "",
+    "分析原始 PDF 的设计特征，生成一套 CSS 规则，应用到翻译后的 HTML 上使其视觉一致性最大化。",
+    "",
+    "### 必须覆盖的规范：",
+    "1. **字体层级**：从 PDF 提取主要字体族、字号、粗细，生成 body 和各语义类的 CSS font-family/font-size/font-weight 规则",
+    "2. **颜色方案**：提取 PDF 中的强调色（如 green 注释、blue 链接），定义 CSS 颜色类",
+    "3. **表格样式**：边框颜色/宽度、单元格内边距、表头背景色、字体大小，与 PDF 一致",
+    "4. **图片样式**：最大宽度、对齐方式、响应式行为",
+    '5. **页面留白**：HTML 中靠近右边界的元素已加 class="near-right"。检查报告中的 "Right-edge proximity" 数据，为 .near-right 类生成足够的 padding-right（至少 10px）',
+    "6. **行距与段距**：提取 PDF 的 line-height 模式，确保正文、标题、注释的行距层级分明",
+    "",
+    "### 要求：",
+    "- 只输出 CSS 规则（<style> 块内的内容），不要包含 HTML 标签修改建议",
+    "- 规则要通用，适用于所有页面，不能依赖特定页面的元素",
+    "- 中文字体必须有适当的退化栈（如 'Times New Roman', 'Noto Serif CJK SC', serif）",
+    "",
+    "输出格式：只输出纯 CSS 代码块，用 ```css 包裹，不要任何解释性文字。",
+  ].join("\n");
 
-## 任务：生成统一风格指南
-
-分析原始 PDF 的设计特征，生成一套 CSS 规则，应用到翻译后的 HTML 上使其视觉一致性最大化。
-
-### 必须覆盖的规范：
-1. **字体层级**：从 PDF 提取主要字体族、字号、粗细，生成 body 和各语义类的 CSS font-family/font-size/font-weight 规则
-2. **颜色方案**：提取 PDF 中的强调色（如 green 注释、blue 链接），定义 CSS 颜色类
-3. **表格样式**：边框颜色/宽度、单元格内边距、表头背景色、字体大小，与 PDF 一致
-4. **图片样式**：最大宽度、对齐方式、响应式行为
-5. **页面留白**：检查报告中的 "Right-edge proximity" 和 "top-edge" 数据。如果元素过于靠近页边（<20px），在对应元素类中增加足够的 padding-right 或调整 right 定位值
-6. **行距与段距**：提取 PDF 的 line-height 模式，确保正文、标题、注释的行距层级分明
-
-### 要求：
-- 只输出 CSS 规则（<style> 块内的内容），不要包含 HTML 标签修改建议
-- 规则要通用，适用于所有页面，不能依赖特定页面的元素
-- 中文字体必须有适当的退化栈（如 'Times New Roman', 'Noto Serif CJK SC', serif）
-
-输出格式：只输出纯 CSS 代码块，用 \`\`\`css 包裹，不要任何解释性文字。`,
-  );
+  await session.prompt(grillPrompt);
 
   const grillMsg = session.getLastAssistantMessage();
   let styleGuide = "";
