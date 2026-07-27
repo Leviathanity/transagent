@@ -138,6 +138,32 @@ function generateLayoutSummary(pdfJson: string, htmlJson: string): string {
   lines.push(`### Accent colors: ${[...pdfColors].join(", ")}`);
   lines.push("");
 
+  // Page-edge proximity analysis
+  const rightEdgeElements: string[] = [];
+  const topEdgeElements: string[] = [];
+  for (const pdfPage of pdfData) {
+    const htmlPage = htmlData.find((p: any) => p.page === pdfPage.page);
+    if (!htmlPage) continue;
+
+    for (const he of htmlPage.elements) {
+      const fromRight = 1024 - (he.x + he.w);
+      const fromTop = he.y;
+      if (fromRight < 30 && fromRight > 0 && he.text.length > 2) {
+        rightEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,20)}" right=${fromRight}px from edge`);
+      }
+      if (fromTop < 30 && fromTop > 0 && he.text.length > 2) {
+        topEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,20)}" top=${fromTop}px from edge`);
+      }
+    }
+  }
+
+  if (rightEdgeElements.length > 0) {
+    lines.push(`### Right-edge proximity (${rightEdgeElements.length} elements near page right border):`);
+    for (const e of rightEdgeElements.slice(0, 8)) lines.push(`- ${e}`);
+    if (rightEdgeElements.length > 8) lines.push(`- ... and ${rightEdgeElements.length - 8} more`);
+    lines.push("");
+  }
+
   // Per-page layout observations
   for (const pdfPage of pdfData) {
     const htmlPage = htmlData.find((p: any) => p.page === pdfPage.page);
@@ -198,15 +224,20 @@ export async function stageBeautify(
 
 ## 任务：生成统一风格指南
 
-分析原始 PDF 的设计特征（字体、字号、颜色、表格样式、行间距），生成一套 CSS 规则，应用到翻译后的 HTML 上使其视觉一致性最大化。
+分析原始 PDF 的设计特征，生成一套 CSS 规则，应用到翻译后的 HTML 上使其视觉一致性最大化。
 
-要求：
-1. 只输出 CSS 规则（<style> 块内的内容），不要包含 HTML 标签修改建议
-2. 针对页面级别的样式：body 背景、body 字体、.page 阴影
-3. 针对表格：.det-table 的边框颜色、内边距、表头背景色、单元格字体大小
-4. 针对图片：.det-image 的最大宽度、对齐方式
-5. 保持与原始 PDF 一致的设计语言：字号层级、颜色方案、间距模式
-6. 规则要通用，适用于所有页面，不能依赖特定页面的元素
+### 必须覆盖的规范：
+1. **字体层级**：从 PDF 提取主要字体族、字号、粗细，生成 body 和各语义类的 CSS font-family/font-size/font-weight 规则
+2. **颜色方案**：提取 PDF 中的强调色（如 green 注释、blue 链接），定义 CSS 颜色类
+3. **表格样式**：边框颜色/宽度、单元格内边距、表头背景色、字体大小，与 PDF 一致
+4. **图片样式**：最大宽度、对齐方式、响应式行为
+5. **页面留白**：检查报告中的 "Right-edge proximity" 和 "top-edge" 数据。如果元素过于靠近页边（<20px），在对应元素类中增加足够的 padding-right 或调整 right 定位值
+6. **行距与段距**：提取 PDF 的 line-height 模式，确保正文、标题、注释的行距层级分明
+
+### 要求：
+- 只输出 CSS 规则（<style> 块内的内容），不要包含 HTML 标签修改建议
+- 规则要通用，适用于所有页面，不能依赖特定页面的元素
+- 中文字体必须有适当的退化栈（如 'Times New Roman', 'Noto Serif CJK SC', serif）
 
 输出格式：只输出纯 CSS 代码块，用 \`\`\`css 包裹，不要任何解释性文字。`,
   );
@@ -240,7 +271,11 @@ export async function stageBeautify(
 
   // Goal: apply style guide (CSS-only by default)
   const cssEditOnly = !allowHtmlEdit
-    ? "\n核心约束（CSS-Only 模式）：你只能修改 <style> 块内的 CSS 规则。严禁修改任何 HTML 元素、标签、position 值或文本内容。如果用户提示涉及 HTML 修改才可例外。"
+    ? `\n核心约束（CSS-Only 模式）：
+- 只能修改 <style> 块内的 CSS 规则
+- 严禁修改任何 HTML 元素、标签、position 值或文本内容
+- 特别注意：如果风格指南要求调整页边距，应该通过 CSS padding/margin 实现，不要改动 left/top inline 值
+- 只有用户显式请求 HTML 编辑时才可例外`
     : "\n注意：用户提示中提到了 HTML 元素修改需求，你可以在此基础上适当调整 HTML 结构，但必须保持元素独立性和结构完整性。";
 
   await session.goalRuntime.createGoal({
