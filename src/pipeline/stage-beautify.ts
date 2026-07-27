@@ -207,22 +207,24 @@ export async function stageBeautify(
   let htmlContent = await readFile(htmlPath, "utf-8");
   const htmlLayout = parseHtmlLayout(htmlContent);
 
-  // Pre-process: add .near-right class to elements close to the right page edge
-  let added = 0;
+  // Pre-process: add .near-right class
+  // Pass 1: elements with explicit left+width indicating right-edge position
   htmlContent = htmlContent.replace(
     /(<div )style="([^"]*left:(\d+)px[^"]*top:(\d+)px[^"]*width:(\d+)px[^"]*)"/g,
     (match, prefix, styleContent, leftStr, topStr, widthStr) => {
       const left = parseInt(leftStr);
       const width = parseInt(widthStr);
-      const right = left + (width || 200);
-      // Only add class if this is a right-edge element without existing class
-      if (right > 870 && right < 1024 && !match.includes('class="')) {
-        added++;
+      if (left + width > 870 && left + width < 1024 && !match.includes('near-right')) {
         return `${prefix}class="near-right" style="${styleContent}"`;
       }
       return match;
     }
   );
+
+  // Pass 2: ALL det-table elements always get near-right (tables are wide)
+  htmlContent = htmlContent.replace(/<div class="det-table" style="/g, '<div class="det-table near-right" style="');
+
+  const added = (htmlContent.match(/near-right/g) || []).length;
   if (added > 0) {
     await writeFile(htmlPath, htmlContent, "utf-8");
     console.log(`  Added .near-right class to ${added} right-edge elements`);
@@ -332,33 +334,18 @@ ${styleGuide}
   let aft = await readFile(htmlPath, "utf-8");
   if (allowHtmlEdit) {
     let moved = 0;
-    // Adjust items WITH explicit width
+    // Adjust ALL near-right elements: reduce left by 18px
     aft = aft.replace(
-      /(<div )class="near-right" style="([^"]*left:)(\d+)(px[^"]*width:)(\d+)(px[^"]*")/g,
-      (match, prefix, beforeLeft, leftStr, middle, widthStr, suffix) => {
+      /(<div class="[^"]*near-right[^"]* style="[^"]*left:)(\d+)(px[^"]*")/g,
+      (match, beforeLeft, leftStr, suffix) => {
         const left = parseInt(leftStr);
-        const width = parseInt(widthStr);
-        if (left + width > 870 && left + width < 1024) {
+        if (left >= 100) {
           moved++;
-          return `${prefix}class="near-right" style="${beforeLeft}${Math.max(0, left - 18)}${middle}${widthStr}${suffix}`;
+          return `${beforeLeft}${left - 18}${suffix}`;
         }
         return match;
       }
     );
-    // Adjust items WITHOUT explicit width (use right-edge inline left only)
-    if (moved === 0) {
-      aft = aft.replace(
-        /(<div )class="near-right" style="([^"]*left:)(\d+)(px[^"]*")/g,
-        (match, prefix, beforeLeft, leftStr, suffix) => {
-          const left = parseInt(leftStr);
-          if (left > 680 && left < 1024) {
-            moved++;
-            return `${prefix}class="near-right" style="${beforeLeft}${Math.max(0, left - 18)}${suffix}`;
-          }
-          return match;
-        }
-      );
-    }
     if (moved > 0) {
       await writeFile(htmlPath, aft, "utf-8");
       console.log(`  RightEdgeAdjust: moved ${moved} elements ${18}px left`);
