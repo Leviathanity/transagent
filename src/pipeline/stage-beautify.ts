@@ -225,12 +225,17 @@ export async function stageBeautify(
   htmlContent = htmlContent.replace(/<div class="det-table" style="/g, '<div class="det-table near-right" style="');
 
   // Pass 3: absolutely-positioned divs without explicit width (body text fills to edge)
+  // Add near-right class AND max-width to constrain text from touching page border
   htmlContent = htmlContent.replace(
-    /(<div )style="(position:absolute;[^"]*left:\d+px;[^"]*)"/g,
-    (match, prefix, styleContent) => {
-      // Only add to elements without width, without existing class, and not det-table/image
+    /(<div )style="(position:absolute;[^"]*left:(\d+)px;[^"]*)"/g,
+    (match, prefix, styleContent, leftStr) => {
       if (styleContent.includes("width:") || styleContent.includes("max-width:")) return match;
       if (match.includes('class="') || match.includes("det-table") || match.includes("det-image")) return match;
+      const left = parseInt(leftStr);
+      const maxW = 1024 - left - 30; // 30px right margin
+      if (maxW > 400 && maxW < 1024) {
+        return `${prefix}class="near-right" style="${styleContent};max-width:${maxW}px"`;
+      }
       return `${prefix}class="near-right" style="${styleContent}"`;
     }
   );
