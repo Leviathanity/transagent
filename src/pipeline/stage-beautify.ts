@@ -224,6 +224,17 @@ export async function stageBeautify(
   // Pass 2: ALL det-table elements always get near-right (tables are wide)
   htmlContent = htmlContent.replace(/<div class="det-table" style="/g, '<div class="det-table near-right" style="');
 
+  // Pass 3: absolutely-positioned divs without explicit width (body text fills to edge)
+  htmlContent = htmlContent.replace(
+    /(<div )style="(position:absolute;[^"]*left:\d+px;[^"]*)"/g,
+    (match, prefix, styleContent) => {
+      // Only add to elements without width, without existing class, and not det-table/image
+      if (styleContent.includes("width:") || styleContent.includes("max-width:")) return match;
+      if (match.includes('class="') || match.includes("det-table") || match.includes("det-image")) return match;
+      return `${prefix}class="near-right" style="${styleContent}"`;
+    }
+  );
+
   const added = (htmlContent.match(/near-right/g) || []).length;
   if (added > 0) {
     await writeFile(htmlPath, htmlContent, "utf-8");
