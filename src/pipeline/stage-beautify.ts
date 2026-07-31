@@ -1,4 +1,5 @@
 import { readFile, copyFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { lintHtml } from "../utils/lint.js";
 import { execa } from "execa";
@@ -6,6 +7,8 @@ import { parseHTML } from "linkedom";
 import type { StageResult } from "../types/pipeline.js";
 
 const WSL_PYTHON = "/root/ptl-ocr-env/bin/python3";
+
+const insideWsl = existsSync("/proc/sys/fs/binfmt_misc/WSLInterop");
 
 function wslPath(winPath: string): string {
   return winPath
@@ -15,11 +18,11 @@ function wslPath(winPath: string): string {
 
 /** Extract PDF text blocks with font info for layout comparison */
 async function extractPdfLayout(pdfPath: string): Promise<string> {
-  const wslPdf = wslPath(resolve(pdfPath));
+  const pdfAbs = resolve(pdfPath);
   const script = `
 import fitz, json, sys, os
-doc = fitz.open("${wslPdf}")
-max_pages = min(len(doc), 5)
+doc = fitz.open("${pdfAbs}")
+max_pages = len(doc)
 PDF_TO_PAGE = 300 / 72
 PAGE_W = 1024
 MODEL_SIZE = 1024
@@ -63,7 +66,9 @@ for i in range(max_pages):
 doc.close()
 print(json.dumps(results))
 `;
-  const result = await execa("wsl", [WSL_PYTHON, "-c", script], { timeout: 60000, stdout: "pipe", stderr: "inherit" });
+  const result = insideWsl
+    ? await execa(WSL_PYTHON, ["-c", script], { timeout: 60000, stdout: "pipe", stderr: "inherit" })
+    : await execa("wsl", [WSL_PYTHON, "-c", script], { timeout: 60000, stdout: "pipe", stderr: "inherit" });
   return result.stdout;
 }
 

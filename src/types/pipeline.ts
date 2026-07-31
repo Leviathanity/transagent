@@ -20,6 +20,8 @@ export interface PipelineConfig {
   glossaryPath?: string;
   reviewModel: string;
   translateModel: string;
+  beautifyModel: string;
+  beautifySpec: string;
   concurrency: number;
   skipInteract: boolean;
   workDir: string;
