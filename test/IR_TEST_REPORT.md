@@ -95,6 +95,15 @@ CLI 契约：`ptl convert test/test1.pdf --output cli.html --pages 1` → exit 0
 
 ✅ 成功：识别 6 个 right-edge 元素并加 `near-right`，Grill 生成 181 行 CSS 风格指南注入 `<style>`（保留 review 的 max-width 修复），输出 `test1p1_beautified.html`（9,681 B，无 det 标签）。
 
+### 3b-5 33 页完整文件 review → beautify（补跑）
+
+| 阶段 | 结果 |
+|---|---|
+| review（33 页） | ✅ Grill 发现 157 项（38 lint + 119 grill），Goal **95 个 assistant turns（202 messages）全部修复**：7 张表追加 `max-width:900px`、24 处 title-content 加宽标题容器等；输出 `test1_reviewed.html`（227,794 B） |
+| beautify（33 页） | ✅ 502 个 right-edge 元素加 `near-right`，Grill 生成 **270 行 CSS** 风格指南注入；review 修复全部保留；输出 `test1_beautified.html`（227,794 B，无 det 标签） |
+
+完整产物已归档至 `workdir/ir-e2e-2026-07-31/`（`test1_reviewed.html`、`test1_beautified.html`、`test1_review_report.md`、`test1_reviewed_beautify_report.md`）。
+
 复现命令（需 `DEEPSEEK_API_KEY` 环境变量）：
 
 ```bash
