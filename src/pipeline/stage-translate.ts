@@ -3,7 +3,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import { loadGlossary } from "../glossary/loader.js";
 import { formatForPrompt } from "../glossary/matcher.js";
 import { buildTranslatorSystemPrompt } from "../agents/translator.js";
-import { asyncPool } from "../utils/async-pool.js";
 import {
   buildBlockPrompt,
   buildTablePrompt,
@@ -125,29 +124,45 @@ export async function stageTranslate(
       `  Translating ${toTranslate.length} blocks + ${tocGroups.length} TOC groups (concurrency=${actualConcurrency}, session rotation=${sessionRotation})...`,
     );
 
-    const results = await asyncPool(
-      actualConcurrency,
-      toTranslate,
-      async ({ block }, i) => {
-        const worker = i % actualConcurrency;
-        const session = await acquire(worker);
-        try {
-          const textKey =
-            block.type === "table"
-              ? JSON.stringify([block.headerRows, block.rows]).slice(0, 200)
-              : block.text.trim().slice(0, 200);
-          const cached = dedupCache.get(textKey);
-          if (cached !== undefined) {
-            return { id: block.id, translated: cached };
-          }
-          const translated = await translatePrompt(session, buildBlockPrompt(block));
-          dedupCache.set(textKey, translated);
-          return { id: block.id, translated };
-        } finally {
-          await release(worker);
-        }
-      },
+    // Each worker owns one session and processes its group serially; groups
+    // run in parallel. This guarantees a session never receives a second
+    // prompt while one is still in flight.
+    const groups: {
+      page: number;
+      index: number;
+      block: SourceBlock;
+    }[][] = Array.from(
+      { length: actualConcurrency },
+      () => [],
     );
+    toTranslate.forEach((item, i) => groups[i % actualConcurrency].push(item));
+
+    const groupResults = await Promise.all(
+      groups.map(async (group, worker) => {
+        const out: { id: string; translated: string }[] = [];
+        for (const { block } of group) {
+          const session = await acquire(worker);
+          try {
+            const textKey =
+              block.type === "table"
+                ? JSON.stringify([block.headerRows, block.rows]).slice(0, 200)
+                : block.text.trim().slice(0, 200);
+            const cached = dedupCache.get(textKey);
+            if (cached !== undefined) {
+              out.push({ id: block.id, translated: cached });
+              continue;
+            }
+            const translated = await translatePrompt(session, buildBlockPrompt(block));
+            dedupCache.set(textKey, translated);
+            out.push({ id: block.id, translated });
+          } finally {
+            await release(worker);
+          }
+        }
+        return out;
+      }),
+    );
+    const results = groupResults.flat();
 
     const translationMap = new Map(results.map((r) => [r.id, r.translated]));
 
