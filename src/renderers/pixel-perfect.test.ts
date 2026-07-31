@@ -90,6 +90,30 @@ describe("renderPixelPerfectHtml", () => {
     expect(html).toContain("<td>Bolt</td>");
   });
 
+  it("pads short table rows so no cell border is missing", () => {
+    const ir2: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1448,
+          blocks: [
+            {
+              id: "t1",
+              type: "table",
+              level: 0,
+              text: "",
+              headerRows: [["a", "b", "c"]],
+              rows: [["x", "y"]],
+              geometry: { x: 80, y: 100, width: 400, height: 80 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(ir2);
+    expect(out).toContain("<td>x</td><td>y</td><td></td>");
+  });
+
   it("renders images with src and alt", () => {
     expect(html).toContain('class="det-image"');
     expect(html).toContain('src="emb_p0000_n0.png"');

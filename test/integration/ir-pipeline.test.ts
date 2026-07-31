@@ -104,6 +104,13 @@ describe("IR pipeline integration (no GPU / no LLM)", () => {
     expect(lintHtml(renderPixelPerfectHtml(overlapped)).length).toBeGreaterThan(0);
   });
 
+  it("lint detects table rows with missing cells", () => {
+    const badTable =
+      '<div class="page" style="width:1024px;height:1448px;"><div class="det-table" style="position:absolute;left:0;top:0;"><table><tr><td>a</td><td>b</td></tr><tr><td>x</td></tr></table></div></div>';
+    const issues = lintHtml(badTable);
+    expect(issues.some((i) => i.subType === "table-column-mismatch")).toBe(true);
+  });
+
   it("runs translate → render end-to-end with a fake session", async () => {
     const dir = await mkdtemp(join(tmpdir(), "ptl-ir-e2e-"));
     try {

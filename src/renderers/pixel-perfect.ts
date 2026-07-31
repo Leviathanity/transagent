@@ -20,11 +20,19 @@ function fontStyleCss(b: SourceBlock): string {
 }
 
 function tableInnerHtml(t: TableSourceBlock, height: number): string {
+  const maxCols = Math.max(
+    0,
+    ...[...t.headerRows, ...t.rows].map((r) => r.length),
+  );
+  const pad = (r: string[]) => [
+    ...r,
+    ...Array(Math.max(0, maxCols - r.length)).fill(""),
+  ];
   const header = t.headerRows
-    .map((r) => `<tr>${r.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`)
+    .map((r) => `<tr>${pad(r).map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`)
     .join("");
   const body = t.rows
-    .map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
+    .map((r) => `<tr>${pad(r).map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
     .join("");
   let inner = `<table>${header}${body}</table>`;
 

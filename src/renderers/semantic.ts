@@ -2,11 +2,19 @@ import type { DocumentIR, SourceBlock } from "../types/document-ir.js";
 import { escapeHtml } from "../utils/html-escape.js";
 
 function renderTable(b: Extract<SourceBlock, { type: "table" }>): string {
+  const maxCols = Math.max(
+    0,
+    ...[...b.headerRows, ...b.rows].map((r) => r.length),
+  );
+  const pad = (r: string[]) => [
+    ...r,
+    ...Array(Math.max(0, maxCols - r.length)).fill(""),
+  ];
   const header = b.headerRows
-    .map((r) => `<tr>${r.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`)
+    .map((r) => `<tr>${pad(r).map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`)
     .join("");
   const body = b.rows
-    .map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
+    .map((r) => `<tr>${pad(r).map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
     .join("");
   if (!header && !body) return "";
   return `<table><thead>${header}</thead><tbody>${body}</tbody></table>`;

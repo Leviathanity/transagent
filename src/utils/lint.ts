@@ -133,6 +133,25 @@ export function lintHtml(html: string): LintIssue[] {
         });
       }
     }
+
+    // Table structure: rows must agree on the column count, otherwise cells
+    // (and their borders) are silently missing.
+    for (const table of page.querySelectorAll(".det-table table")) {
+      const colCounts = [...table.querySelectorAll("tr")].map(
+        (tr) => tr.querySelectorAll("td,th").length,
+      );
+      const max = Math.max(0, ...colCounts);
+      colCounts.forEach((count, ri) => {
+        if (count !== max) {
+          issues.push({
+            severity: "warning",
+            category: "Table structure",
+            subType: "table-column-mismatch",
+            description: `Page ${pi + 1}: table row ${ri + 1} has ${count} cells, expected ${max}`,
+          });
+        }
+      });
+    }
   }
 
   return issues;

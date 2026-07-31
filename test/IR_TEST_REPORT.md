@@ -132,6 +132,21 @@ bun run bin/ptl.ts translate test/test1.pdf --skip-interact   # 完整管线
 3. **测试体系完成分阶段搭建**：无 GPU/LLM 即可回归全部核心逻辑；真实依赖阶段命令留档，GPU 与 API 均验证可用。
 4. **API key 安全**：key 仅以环境变量临时传入，未写入仓库；建议测试后轮换。
 
+## 附录：表格缺边框问题（2026-07-31 诊断与修复）
+
+**现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
+
+**根因**：`parseTableHtml` 对单元格做 `.filter(c => c.length > 0)`，OCR 表格中的**空单元格被丢弃**；渲染器按行内 cells 原样输出，行内 `<td>` 数量不一致 → CSS 无法为不存在的单元格画边框。
+
+**为什么最终输出未解决**：review/beautify 均为样式层修复（Goal 约束禁止改表格结构、beautify 只注入 CSS），CSS 不能为缺失的 `<td>` 画边框；IR 数据从提取阶段就缺列，问题一路保留。
+
+**修复**：
+1. `parseTableHtml` / `parseMarkdownTable`：保留空单元格，并按全表最大列数补齐（`src/utils/table-cells.ts`）；
+2. 双渲染器 `tableInnerHtml` / `renderTable`：输出前按最大列数补齐 `<td>/<th>`（防御兜底）；
+3. `lintHtml` 新增 `table-column-mismatch` 结构检测（`src/utils/lint.ts`）。
+
+**重验**：重跑前 31 页真实 OCR（`test1_fixed.ir.json` / `test1_fixed.html`），7 个表格 IR 层与渲染 HTML 层列数**全部一致（0 缺列）**；全量测试 58 → 63（新增 table-cells 3 项 + 渲染器补齐 1 项 + lint 检测 1 项），全部通过。
+
 ## 复现命令
 
 ```bash

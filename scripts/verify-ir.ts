@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Verify the new Document IR pipeline end-to-end:
-//   bun run scripts/verify-ir.ts <input.pdf> <ir.json> <output.html>
+//   bun run scripts/verify-ir.ts <input.pdf> <ir.json> <output.html> [maxPages]
 // Runs the real Unlimited-OCR converter, renders the IR, and reports stats + lint.
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -9,13 +9,14 @@ import { parseDocument } from "../src/utils/ir-serialization.js";
 import { renderPixelPerfectHtml } from "../src/renderers/pixel-perfect.js";
 import { lintHtml } from "../src/utils/lint.js";
 
-const [pdfPath, irPath, htmlPath] = process.argv.slice(2);
+const [pdfPath, irPath, htmlPath, pagesArg] = process.argv.slice(2);
 if (!pdfPath || !irPath || !htmlPath) {
-  console.error("Usage: bun run scripts/verify-ir.ts <input.pdf> <ir.json> <output.html>");
+  console.error("Usage: bun run scripts/verify-ir.ts <input.pdf> <ir.json> <output.html> [maxPages]");
   process.exit(1);
 }
 
-const r = await stageConvertToIr(pdfPath, irPath);
+const maxPages = pagesArg ? parseInt(pagesArg, 10) : undefined;
+const r = await stageConvertToIr(pdfPath, irPath, maxPages);
 if (!r.success) {
   console.error(`Convert failed: ${r.error}`);
   process.exit(1);
