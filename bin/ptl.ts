@@ -11,7 +11,6 @@ import { stageInteract } from "../src/pipeline/stage-interact.js";
 import { stageBeautify } from "../src/pipeline/stage-beautify.js";
 import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
-import { WORKDIR_LAYOUT } from "../src/utils/file-manager.js";
 
 const cmd = process.argv[2];
 const subArgs = process.argv.slice(3);
@@ -20,19 +19,20 @@ async function ensureDir(path: string) {
   await mkdir(dirname(path), { recursive: true });
 }
 
-// ─── ptl convert <file.pdf> [--output <path>] ───
+// ─── ptl convert <file.pdf> [--output <path>] [--pages <n>] ───
 if (cmd === "convert") {
   const { values, positionals } = (await import("node:util")).parseArgs({
     args: subArgs,
     allowPositionals: true,
-    options: { output: { type: "string" } },
+    options: { output: { type: "string" }, pages: { type: "string" } },
     strict: false,
   });
   const pdfPath = positionals[0];
-  if (!pdfPath) { console.error("Usage: ptl convert <file.pdf> [--output <path>]"); process.exit(1); }
+  if (!pdfPath) { console.error("Usage: ptl convert <file.pdf> [--output <path>] [--pages <n>]"); process.exit(1); }
 
   const outPath = values.output as string | undefined;
-  const r = await stageConvert(pdfPath, outPath);
+  const maxPages = values.pages ? parseInt(values.pages as string) : undefined;
+  const r = await stageConvert(pdfPath, outPath, maxPages);
   if (!r.success) { console.error(r.error); process.exit(1); }
 
   if (!outPath) {
@@ -77,7 +77,7 @@ if (cmd === "review") {
   process.exit(0);
 }
 
-// ─── ptl translate-blocks <file.html> [--glossary <path>] [--direction <d>] [--model <m>] [--concurrency <n>] [--output <path>] ───
+// ─── ptl translate-blocks <file.ir.json> [--glossary <path>] [--direction <d>] [--model <m>] [--concurrency <n>] [--output <path>] ───
 if (cmd === "translate-blocks") {
   const { values, positionals } = (await import("node:util")).parseArgs({
     args: subArgs,
@@ -91,13 +91,14 @@ if (cmd === "translate-blocks") {
     },
     strict: false,
   });
-  const htmlPath = positionals[0];
-  if (!htmlPath) {
-    console.error("Usage: ptl translate-blocks <file.html> [options]");
+  const irPath = positionals[0];
+  if (!irPath) {
+    console.error("Usage: ptl translate-blocks <file.ir.json> [options]");
     process.exit(1);
   }
 
-  const outputPath = (values.output as string) ?? htmlPath.replace(/\.html$/, "_translated.html");
+  const outputPath =
+    (values.output as string) ?? irPath.replace(/\.ir\.json$/, "_translated.ir.json");
   const direction = (values.direction === "zh2en" || values.direction === "en2zh")
     ? values.direction : "en2zh";
 
@@ -106,7 +107,7 @@ if (cmd === "translate-blocks") {
     direction,
     parseInt(values.concurrency as string),
     values.model as string,
-    htmlPath,
+    irPath,
     outputPath,
   );
   if (!r.success) { console.error(r.error); process.exit(1); }
@@ -213,6 +214,8 @@ if (cmd === "translate") {
       glossary: { type: "string" },
       "review-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
       "translate-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
+      "beautify-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
+      "beautify-spec": { type: "string", default: "specs/beautify-layout.md" },
       concurrency: { type: "string", default: "3" },
       "skip-interact": { type: "boolean", default: false },
       output: { type: "string" },
@@ -242,6 +245,8 @@ if (cmd === "translate") {
     glossaryPath: values.glossary as string | undefined,
     reviewModel: values["review-model"] as string,
     translateModel: values["translate-model"] as string,
+    beautifyModel: values["beautify-model"] as string,
+    beautifySpec: values["beautify-spec"] as string,
     concurrency: parseInt(values.concurrency as string),
     skipInteract: values["skip-interact"] as boolean,
     workDir: "workdir",
@@ -254,24 +259,20 @@ console.log(`Usage: ptl <command> [args]
 
 Commands:
   convert <file.pdf> [--output <path>]            Stage 1: PDF → HTML
-  review <file.html> --spec <path> [options]      Stage 2/4: Grill + Goal fix
-  translate-blocks <file.html> [options]          Stage 3: Block translation
-  beautify <file.html> <file.pdf> [options]       Post-translation: reference PDF to polish HTML
-  interact <file.html> [--output <path>]          Stage 5: Terminal Q&A
-  translate <file.pdf> [options]                  Full pipeline (1-5)
+  translate-blocks <file.ir.json> [options]       Stage 2: IR block translation
+  review <file.html> --spec <path> [options]      Stage 3: Grill + Goal fix
+  beautify <file.html> <file.pdf> [options]       Stage 4: Reference PDF to polish HTML
+  interact <file.html> [--output <path>]          Interactive terminal Q&A
+  translate <file.pdf> [options]                  Full pipeline (1→4)
   check                                           Environment check
-
-Options for beautify:
-  --prompt <text>              User beautification hints/preferences
-  --output <path>              Output path
-  --spec <path>                Beautify spec (default: specs/beautify-layout.md)
-  --model <model>              LLM model (default: deepseek/deepseek-v4-flash)
 
 Options for translate:
   --direction <en2zh|zh2en>   Direction (default: auto-detect)
   --glossary <path>           Glossary JSON file
   --review-model <model>      Model for review (default: deepseek/deepseek-v4-flash)
   --translate-model <model>   Model for translation (default: deepseek/deepseek-v4-flash)
+  --beautify-model <model>    Model for beautify (default: deepseek/deepseek-v4-flash)
+  --beautify-spec <path>      Beautify spec (default: specs/beautify-layout.md)
   --concurrency <n>           Translation concurrency (default: 3)
-  --skip-interact             Skip stage 5 (CI mode)
+  --skip-interact             Skip interactive review (CI mode)
   --output <path>             Output path`);

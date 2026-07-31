@@ -1,5 +1,4 @@
 import type { SourceBlock } from "../types/source-block.js";
-import { parseHTML } from "linkedom";
 
 /** Maximum characters before a TOC-like entry is considered "short" */
 const SHORT_LINE_MAX = 60;
@@ -31,19 +30,13 @@ export function buildTextPrompt(text: string): string {
 }
 
 /** Build translation prompt for a table block — one cell per line */
-export function buildTablePrompt(tableHtml: string): string {
-  try {
-    const wrapper = tableHtml.trim().startsWith("<table") ? tableHtml : `<table>${tableHtml}</table>`;
-    const { document } = parseHTML(wrapper);
-    const cells = document.querySelectorAll("td,th");
-    const lines = [...cells]
-      .map(c => (c.textContent ?? "").trim())
-      .filter(t => t.length > 0);
-    if (lines.length === 0) return "";
-    return `将以下表格单元格内容逐行翻译为目标语言（严格按顺序，每行一个译文，不要使用任何 HTML 标签或格式化，不要附加解释）：\n\n${lines.join("\n")}`;
-  } catch {
-    return "";
-  }
+export function buildTablePrompt(headerRows: string[][], rows: string[][]): string {
+  const lines = [...headerRows, ...rows]
+    .flat()
+    .map((c) => c.trim())
+    .filter((t) => t.length > 0);
+  if (lines.length === 0) return "";
+  return `将以下表格单元格内容逐行翻译为目标语言（严格按顺序，每行一个译文，不要使用任何 HTML 标签或格式化，不要附加解释）：\n\n${lines.join("\n")}`;
 }
 
 /** Build a grouped translation prompt for multiple TOC entries */
@@ -62,21 +55,25 @@ export function buildListPrompt(text: string): string {
 
 /** Get the appropriate prompt for a source block. Returns "" if block should be skipped. */
 export function buildBlockPrompt(block: SourceBlock): string {
-  switch (block.blockType) {
+  switch (block.type) {
     case "table":
-      return buildTablePrompt(block.text);
+      return buildTablePrompt(block.headerRows, block.rows);
     case "code":
       return "";
     case "other":
+      return "";
+    case "image":
       return "";
     case "heading":
       return buildTextPrompt(block.text);
     case "list":
       return buildListPrompt(block.text);
+    case "toc":
+      return buildTextPrompt(block.text);
     case "paragraph":
       return buildTextPrompt(block.text);
     default:
-      return buildTextPrompt(block.text);
+      return "";
   }
 }
 
@@ -91,12 +88,12 @@ export interface TocGroup {
   texts: string[];
 }
 
-export function groupTocBlocks(blocks: Pick<SourceBlock, "id" | "blockType" | "text">[]): TocGroup[] {
+export function groupTocBlocks(blocks: Pick<SourceBlock, "id" | "type" | "text">[]): TocGroup[] {
   const groups: TocGroup[] = [];
   let current: TocGroup | null = null;
 
   for (const b of blocks) {
-    if (b.blockType === "paragraph" && isTocLike(b.text)) {
+    if (b.type === "paragraph" && isTocLike(b.text)) {
       if (!current) current = { ids: [], texts: [] };
       current.ids.push(b.id);
       current.texts.push(b.text);

@@ -13,16 +13,19 @@ describe("splitHtmlToBlocks", () => {
   it("extracts <table> as independent block", () => {
     const html = "<h2>Table</h2><table><tr><td>a</td><td>b</td></tr></table><p>text after</p>";
     const result = splitHtmlToBlocks(html);
-    const tableBlocks = result.filter((b) => b.block.blockType === "table");
+    const tableBlocks = result.filter((b) => b.block.type === "table");
     expect(tableBlocks.length).toBe(1);
     expect(tableBlocks[0].block.text).toContain("<table>");
+    if (tableBlocks[0].block.type === "table") {
+      expect(tableBlocks[0].block.rows).toEqual([["a", "b"]]);
+    }
   });
 
   it("extracts <pre> as independent block", () => {
     const html = "<pre><code>code block</code></pre>";
     const result = splitHtmlToBlocks(html);
     expect(result.length).toBe(1);
-    expect(result[0].block.blockType).toBe("code");
+    expect(result[0].block.type).toBe("code");
   });
 
   it("preserves separatorBefore for reassembly", () => {
@@ -37,15 +40,15 @@ describe("splitHtmlToBlocks", () => {
     const result = splitHtmlToBlocks(html);
     expect(result.length).toBe(2);
     expect(result[0].block.level).toBe(0);
-    expect(result[0].block.blockType).toBe("paragraph");
+    expect(result[0].block.type).toBe("paragraph");
   });
 
   it("labels heading blocks correctly", () => {
     const html = "<h2>Section A</h2><p>text</p><h3>Subsection</h3><p>more</p>";
     const result = splitHtmlToBlocks(html);
-    expect(result[0].block.blockType).toBe("heading");
+    expect(result[0].block.type).toBe("heading");
     expect(result[0].block.level).toBe(2);
-    expect(result[1].block.blockType).toBe("heading");
+    expect(result[1].block.type).toBe("heading");
     expect(result[1].block.level).toBe(3);
   });
 });

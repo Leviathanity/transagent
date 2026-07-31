@@ -2,27 +2,16 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export const WORKDIR_LAYOUT = {
-  original: "01_original.html",
-  reviewed: "02_reviewed.html",
-  reviewReport: "02_review_report.md",
-  translated: "03_translated.html",
-  formatted: "04_formatted.html",
+  originalIr: "01_original.ir.json",
+  translatedIr: "02_translated.ir.json",
+  reviewInput: "03_review_input.html",
+  reviewed: "04_reviewed.html",
   formatReport: "04_format_report.md",
+  beautified: "05_beautified.html",
 } as const;
 
 export async function ensureWorkDir(workDir: string): Promise<void> {
   await mkdir(workDir, { recursive: true });
-}
-
-export async function writeIntermediate(
-  workDir: string,
-  filename: string,
-  content: string,
-): Promise<string> {
-  const filePath = `${workDir}/${filename}`;
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, content, "utf-8");
-  return filePath;
 }
 
 export async function readIntermediate(
@@ -30,18 +19,6 @@ export async function readIntermediate(
   filename: string,
 ): Promise<string> {
   return readFile(`${workDir}/${filename}`, "utf-8");
-}
-
-export async function fileExists(
-  workDir: string,
-  filename: string,
-): Promise<boolean> {
-  try {
-    await readFile(`${workDir}/${filename}`, "utf-8");
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function writeFinalOutput(

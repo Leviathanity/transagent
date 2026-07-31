@@ -1,4 +1,5 @@
 import type { SeparatedBlock, SourceBlock, BlockType } from "../types/source-block.js";
+import { parseMarkdownTable } from "../utils/table-cells.js";
 
 function guessBlockType(level: number, text: string): BlockType {
   const t = text.trim();
@@ -7,6 +8,25 @@ function guessBlockType(level: number, text: string): BlockType {
   if (t.startsWith("```")) return "code";
   if (t.startsWith("- ") || t.startsWith("* ") || t.match(/^\d+\.\s/)) return "list";
   return "paragraph";
+}
+
+function makeBlock(
+  id: string,
+  level: number,
+  blockType: BlockType,
+  text: string,
+  separatorBefore: string,
+): SeparatedBlock {
+  if (blockType === "table") {
+    const cells = parseMarkdownTable(text);
+    return {
+      block: { id, type: "table", level, text, headerRows: cells.headerRows, rows: cells.rows },
+      separatorBefore,
+    };
+  }
+  const textType: Exclude<BlockType, "table" | "image"> =
+    blockType === "image" ? "other" : blockType;
+  return { block: { id, type: textType, level, text }, separatorBefore };
 }
 
 export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
@@ -38,8 +58,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
       if (!inTable && currentText.trim()) {
         if (currentLevel <= 2) {
           blocks.push({
-            block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
-            separatorBefore,
+            ...makeBlock(`sb_${currentLevel}_${blockIndex++}`, currentLevel, guessBlockType(currentLevel, currentText), currentText, separatorBefore),
           });
           separatorBefore = "";
           currentText = "";
@@ -54,8 +73,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
       if (line.trim() === "") {
         inTable = false;
         blocks.push({
-          block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
-          separatorBefore,
+          ...makeBlock(`sb_${currentLevel}_${blockIndex++}`, currentLevel, guessBlockType(currentLevel, currentText), currentText, separatorBefore),
         });
         separatorBefore = line + "\n";
         currentText = "";
@@ -72,8 +90,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
       if (hLevel <= 2 || (hLevel === 3 && currentText.length > 2000)) {
         if (currentText.trim()) {
           blocks.push({
-            block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
-            separatorBefore,
+            ...makeBlock(`sb_${currentLevel}_${blockIndex++}`, currentLevel, guessBlockType(currentLevel, currentText), currentText, separatorBefore),
           });
           separatorBefore = "";
           currentText = "";
@@ -87,10 +104,9 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
 
     if (line.trim() === "" && currentText.trim()) {
       if (currentLevel <= 2) {
-        blocks.push({
-          block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
-          separatorBefore,
-        });
+      blocks.push({
+        ...makeBlock(`sb_${currentLevel}_${blockIndex++}`, currentLevel, guessBlockType(currentLevel, currentText), currentText, separatorBefore),
+      });
         separatorBefore = line + "\n";
         currentText = "";
       } else {
@@ -104,8 +120,7 @@ export function splitToSeparatedBlocks(markdown: string): SeparatedBlock[] {
 
   if (currentText.trim()) {
     blocks.push({
-      block: { id: `sb_${currentLevel}_${blockIndex++}`, level: currentLevel, blockType: guessBlockType(currentLevel, currentText), text: currentText },
-      separatorBefore,
+      ...makeBlock(`sb_${currentLevel}_${blockIndex++}`, currentLevel, guessBlockType(currentLevel, currentText), currentText, separatorBefore),
     });
   }
 
