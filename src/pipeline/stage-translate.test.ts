@@ -26,6 +26,7 @@ function fixture(): DocumentIR {
           { id: "sb_0_3", type: "image", level: 0, text: "", src: "logo.png", alt: "logo" },
           { id: "sb_0_4", type: "code", level: 0, text: "const x = 1;" },
           { id: "sb_0_5", type: "other", level: 0, text: "page 1" },
+          { id: "sb_0_6", type: "other", level: 0, text: "page 1" },
         ],
       },
     ],
@@ -33,12 +34,13 @@ function fixture(): DocumentIR {
 }
 
 /** Fake session: echoes each prompt line prefixed with "T:". */
-function fakeSessionFactory(counter: { calls: number }): SessionFactory {
+function fakeSessionFactory(counter: { calls: number; prompts?: number }): SessionFactory {
   return async (): Promise<TranslationSession> => {
     counter.calls++;
     let lastText = "";
     return {
       async prompt(promptText: string) {
+        counter.prompts = (counter.prompts ?? 0) + 1;
         const content = promptText.split("\n\n").slice(1).join("\n\n").trim();
         lastText = content
           .split("\n")
@@ -66,9 +68,9 @@ async function withTempIr(fn: (input: string, output: string) => Promise<void>):
 }
 
 describe("stageTranslate", () => {
-  it("translates text blocks and table cells, skips image/code/other", async () => {
+  it("translates text/table/other blocks, skips image/code, dedups identical other blocks", async () => {
     await withTempIr(async (input, output) => {
-      const counter = { calls: 0 };
+      const counter = { calls: 0, prompts: 0 };
       const r = await stageTranslate(
         undefined,
         "en2zh",
@@ -91,7 +93,10 @@ describe("stageTranslate", () => {
       }
       expect(blocks[3].text).toBe("");
       expect(blocks[4].text).toBe("const x = 1;");
-      expect(blocks[5].text).toBe("page 1");
+      expect(blocks[5].text).toBe("T:page 1");
+      expect(blocks[6].text).toBe("T:page 1");
+      // 4 prompts: paragraph, heading, table, one shared "page 1" prompt
+      expect(counter.prompts).toBe(4);
     });
   });
 
@@ -109,8 +114,9 @@ describe("stageTranslate", () => {
         2,
       );
       expect(r.success).toBe(true);
-      // 6 blocks, 3 translatable, rotation=2 with a single worker → 2 sessions
-      expect(counter.calls).toBe(2);
+      // 7 blocks, 5 translatable (4 prompts due to dedup), rotation=2
+      // with a single worker → 3 sessions
+      expect(counter.calls).toBe(3);
     });
   });
 

@@ -128,4 +128,30 @@ describe("renderPixelPerfectHtml", () => {
     expect(html).toContain("<style>");
     expect(html).toContain(".det-table td");
   });
+
+  it("widens narrow multi-line blocks to match real glyph width", () => {
+    const narrow: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1448,
+          blocks: [
+            {
+              id: "hdr",
+              type: "heading",
+              level: 1,
+              text: "CEER SUPPLIER QUALITY\nHANDBOOK",
+              sourceType: "header",
+              geometry: { x: 305, y: 76, width: 327, height: 58 },
+              font: { family: "'Times New Roman',Times,serif", size: 27.5 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(narrow);
+    // 21 latin chars × 27.5px × 0.65em ≈ 375px → wrapped width 376px, 2 lines
+    expect(out).toContain("width:376px;max-height:83px;white-space:pre-line;");
+    expect(out.match(/width:376px/g)?.length).toBe(1);
+  });
 });

@@ -1,4 +1,5 @@
 import { parseHTML } from "linkedom";
+import { maxLineTextWidth, estimateLineCount } from "./text-metrics.js";
 
 export interface LintIssue {
   severity: "error" | "warning" | "info";
@@ -68,7 +69,15 @@ export function lintHtml(html: string): LintIssue[] {
       const s = el.getAttribute("style") || "";
       const left = parsePx((s.match(/left:([\d.]+)px/) || [])[1] || "0");
       const top = parsePx((s.match(/top:([\d.]+)px/) || [])[1] || "0");
-      const width = parsePx((s.match(/width:([\d.]+)px/) || [])[1] || "0");
+      // Only match the width property, not max-width/min-width
+      const widthMatches = [...s.matchAll(/(?:^|;)width:([\d.]+)px/g)];
+      const width = widthMatches.length
+        ? parsePx(widthMatches[widthMatches.length - 1][1])
+        : 0;
+      const maxWidthMatches = [...s.matchAll(/(?:^|;)max-width:([\d.]+)px/g)];
+      const maxWidth = maxWidthMatches.length
+        ? parsePx(maxWidthMatches[maxWidthMatches.length - 1][1])
+        : 0;
       const height = parsePx((s.match(/height:([\d.]+)px/) || [])[1] || "0");
       const nowrap = s.includes("white-space:nowrap");
       let text = (el.textContent || "").trim();
@@ -80,20 +89,36 @@ export function lintHtml(html: string): LintIssue[] {
       }
       if (!text) continue;
       const fontSize = parsePx((s.match(/font-size:([\d.]+)px/) || [])[1] || "12");
-      const lh = fontSize * 1.5;
+      const bold = s.includes("font-weight:bold");
+      const lhMatch = s.match(/line-height:([\d.]+)(px)?/);
+      const lh = lhMatch
+        ? lhMatch[2]
+          ? parsePx(lhMatch[1])
+          : fontSize * parseFloat(lhMatch[1])
+        : fontSize * 1.5;
       const etype = classifyElem(fontSize, text, top, left, pageH, cls, nowrap, pageW);
 
       let renderW: number;
-      if (nowrap || cls.includes("det-table")) {
+      if (cls.includes("det-table")) {
         renderW = text.length * fontSize * 0.55;
+      } else if (nowrap) {
+        renderW = maxLineTextWidth(text, fontSize, bold);
       } else if (width > 0) {
         renderW = width;
       } else {
         renderW = pageW - left;
       }
 
-      const effW = nowrap && width > 0 ? Math.max(width, text.length * fontSize * 0.55) : (width || renderW);
-      const lines = nowrap ? 1 : Math.max(1, Math.ceil((text.length * fontSize * 0.55) / effW));
+      const effW = cls.includes("det-table")
+        ? width || (maxWidth ? Math.min(maxWidth, renderW) : renderW)
+        : nowrap && width > 0
+          ? Math.max(width, renderW)
+          : width || renderW;
+      const lines = cls.includes("det-table")
+        ? Math.max(1, Math.ceil((text.length * fontSize * 0.55) / effW))
+        : nowrap
+          ? 1
+          : estimateLineCount(text, effW, fontSize, bold);
       // Use explicit height for images (their textContent is just alt text)
       const renderH = (height > 0 && etype === "image") ? height : lines * lh;
 

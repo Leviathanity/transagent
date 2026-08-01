@@ -5,6 +5,7 @@ import type {
   TableSourceBlock,
 } from "../types/document-ir.js";
 import { escapeHtml } from "../utils/html-escape.js";
+import { maxLineTextWidth, estimateLineCount } from "../utils/text-metrics.js";
 
 function fontStyleCss(b: SourceBlock): string {
   const f = b.font;
@@ -58,14 +59,15 @@ function tableInnerHtml(t: TableSourceBlock, height: number): string {
   return inner;
 }
 
-function multiLineStyle(text: string, width: number, size: number): string {
-  const cpl = Math.max(1, Math.floor(width / ((size || 12) * 0.6)));
-  let nlines = 0;
-  for (const part of text.split("\n")) {
-    nlines += Math.max(1, Math.ceil(part.length / cpl));
-  }
-  const minH = Math.floor(nlines * (size || 12) * 1.5);
-  return `width:${width}px;max-height:${minH}px;white-space:pre-line;overflow:hidden;`;
+function multiLineStyle(text: string, width: number, size: number, bold?: boolean): string {
+  // OCR block widths can be narrower than the real glyph advance (e.g. a
+  // 327px header whose text actually needs ~333px), which would wrap an
+  // extra line and push the block into the content below. Use a conservative
+  // script-aware width so wrapping matches real font metrics.
+  const effWidth = Math.max(width, Math.ceil(maxLineTextWidth(text, size, bold)));
+  const nlines = estimateLineCount(text, effWidth, size, bold);
+  const minH = Math.ceil(nlines * (size || 12) * 1.5);
+  return `width:${effWidth}px;max-height:${minH}px;white-space:pre-line;overflow:hidden;`;
 }
 
 function renderBlock(b: SourceBlock): string {
@@ -89,11 +91,10 @@ function renderBlock(b: SourceBlock): string {
 
   const hasNewlines = b.text.includes("\n");
   if (b.type === "heading" || b.type === "other" || hasNewlines) {
-    sty += `width:${g.width}px;`;
     if (hasNewlines) {
-      sty += multiLineStyle(b.text, g.width, size);
+      sty += multiLineStyle(b.text, g.width, size, b.font?.bold);
     } else {
-      sty += "white-space:nowrap;overflow:visible;";
+      sty += `width:${g.width}px;white-space:nowrap;overflow:visible;`;
     }
   }
 

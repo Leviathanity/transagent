@@ -1,6 +1,7 @@
 import { readFile, copyFile, writeFile } from "node:fs/promises";
 import { createReviewSession } from "../utils/omp-session.js";
 import { lintHtml, FIX_HINTS } from "../utils/lint.js";
+import { repairTableStructure } from "../utils/table-repair.js";
 import type { StageResult } from "../types/pipeline.js";
 
 interface ReviewCategory {
@@ -199,6 +200,17 @@ ${fixItems.map(l => l.replace(/^\[.*?\]\s*/, "MUST FIX: ")).join("\n")}`,
     if (tableFixed) {
       await writeFile(inputPath, aft, "utf-8");
       console.log(`  TablePositionGuard: restored original table positions`);
+    }
+    // Table structure guard: the Goal agent sometimes appends stray empty
+    // cells while editing CSS; restore consistent column counts.
+    const tableStructure = repairTableStructure(aft);
+    if (tableStructure.tablesRepaired > 0) {
+      aft = tableStructure.repaired;
+      await writeFile(inputPath, aft, "utf-8");
+      console.log(
+        `  TableStructureGuard: repaired ${tableStructure.tablesRepaired} tables ` +
+          `(-${tableStructure.cellsRemoved} stray cells, +${tableStructure.cellsAdded} padding cells)`,
+      );
     }
     console.log(`  Changed: ${aft !== htmlContent ? "YES" : "NO"}`);
   } else {

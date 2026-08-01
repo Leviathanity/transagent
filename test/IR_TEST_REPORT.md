@@ -176,6 +176,25 @@ bun run bin/ptl.ts translate test/test1.pdf --skip-interact   # 完整管线
 
 **测试**：新增 `inline-images` 单测 7 项（嵌入/缺失保留/data·http 透传/IR 不突变/HTML 层替换）；全量 **72 pass / 0 fail**，`tsc --noEmit` 0 错误。
 
+## Phase 8 — 页眉翻译 + 页眉/元数据重叠修复（2026-08-01）
+
+**问题 1：页眉未翻译**。第 1 页标题在表格单元格内已译；第 2–30 页 running header 是独立块，OCR `header` → 归一化为 `other`，翻译按设计跳过。
+
+**问题 2：页眉与正文重叠（24/33 页，22–26px）**。根因链：
+1. OCR 给页眉块宽 327px，Chrome 实测 "CEER SUPPLIER QUALITY" @27.5px Times 实际宽 333px → `white-space:pre-line` 多折一行（2 行 → 3 行，82.5px → 123px），盒底 197 侵入正文顶 173；
+2. lint 旧度量（0.55em、整段长度、固定 1.5 行高）把 3 行算成 2 行（底 158 < 173）→ 检测不到；
+3. Grill 39 项清单无此问题 → Goal 只修清单 → 漏网。PDF 原文实测页眉两行、正文 y104 起，无重叠——问题由我们的渲染引入。
+
+**修复**：
+1. `translation-prompts.ts`：`other` 块改为可译（image/code 仍跳过）；stage-translate 去重缓存使 29 个同文页眉只调 1 次 LLM（630 块可译，译文 "CEER 供应商质量手册"）。
+2. 新增 `src/utils/text-metrics.ts`（CJK 1em / 拉丁 0.65em / 加粗 0.7em，按显式行估算），`multiLineStyle` 用保守宽度折行并去掉重复 `width` 属性。
+3. `lint.ts`：逐行估算 + 解析真实 `line-height` + 重复 `width` 取最后值 + `max-width` 不当作 `width`（表格块用它封顶）。
+4. `stage-review` 增加 TableStructureGuard：Goal 代理偶发追加空单元格（页 31 表格 5,5,6,5），`repairTableStructure` 按众数列修复。
+
+**重跑结果**（完整 33 页，LLM 实测）：translate 630 块 → review 74 项（42 lint + 32 grill，196 assistant turns 全修）→ beautify 288 行 CSS。最终文件：**lint 0、0 det、8 表完整、页眉 30 页浏览器实测 0 重叠、页眉已译中文**；归档 `workdir/ir-e2e-final-2026-08-01-v2/`（HTML 均为自包含内嵌版）。
+
+**测试**：全量 **88 pass / 0 fail**（+12：text-metrics 4、lint 回归 3、table-repair 4、translation-prompts 2，另更新 stage-translate/renderer 断言），`tsc` 0 错误。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。

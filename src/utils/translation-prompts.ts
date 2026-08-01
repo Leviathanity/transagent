@@ -61,7 +61,7 @@ export function buildBlockPrompt(block: SourceBlock): string {
     case "code":
       return "";
     case "other":
-      return "";
+      return buildTextPrompt(block.text);
     case "image":
       return "";
     case "heading":
