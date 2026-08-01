@@ -70,6 +70,10 @@ export function splitHtmlToBlocks(html: string): SeparatedBlock[] {
   let currentLevel = 0;
   let currentSeparator = "";
   let pendingWhitespace = "";
+  const hasHeadingBoundaries = [...root.childNodes].some((n: any) => {
+    const tag = (n?.tagName ?? "").toLowerCase();
+    return tag === "h2" || tag === "h3";
+  });
 
   function flushBlock(): void {
     const text = currentParts.join("");
@@ -116,6 +120,19 @@ export function splitHtmlToBlocks(html: string): SeparatedBlock[] {
       flushBlock();
       blocks.push({
         ...makeBlock(`sb_0_${blocks.length}`, 0, "code", serializeNode(node), pendingWhitespace),
+      });
+      pendingWhitespace = "";
+      currentLevel = 0;
+    } else if (!hasHeadingBoundaries) {
+      flushBlock();
+      blocks.push({
+        ...makeBlock(
+          `sb_0_${blocks.length}`,
+          0,
+          guessBlockType(0, serializeNode(node)),
+          serializeNode(node),
+          pendingWhitespace,
+        ),
       });
       pendingWhitespace = "";
       currentLevel = 0;

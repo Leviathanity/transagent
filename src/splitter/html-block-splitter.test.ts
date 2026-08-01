@@ -51,4 +51,21 @@ describe("splitHtmlToBlocks", () => {
     expect(result[1].block.type).toBe("heading");
     expect(result[1].block.level).toBe(3);
   });
+
+  it("splits pixel-perfect top-level elements when there are no h2/h3", () => {
+    const html =
+      '<div class="page"><div style="left:1px">One</div></div>\n' +
+      '<div class="det-table"><table><tr><td>a</td><td>b</td></tr></table></div>\n' +
+      '<div class="det-image"><img src="x.png"></div>';
+    const result = splitHtmlToBlocks(html);
+    expect(result.length).toBe(3);
+    expect(result[0].block.text).toContain("<div class=\"page\">");
+    expect(result[0].block.text).toContain("One");
+    expect(result[1].block.type).toBe("table");
+    expect(result[1].block.text).toContain("<table>");
+    expect(result[2].block.text).toContain("<img");
+    const assembled = assembleHtmlBlocks(result, (b) => b.text);
+    // linkedom normalizes <img> into <img></img>; both forms render identically
+    expect(assembled.replaceAll("</img>", "")).toBe(html.replaceAll("</img>", ""));
+  });
 });

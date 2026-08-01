@@ -132,6 +132,32 @@ bun run bin/ptl.ts translate test/test1.pdf --skip-interact   # 完整管线
 3. **测试体系完成分阶段搭建**：无 GPU/LLM 即可回归全部核心逻辑；真实依赖阶段命令留档，GPU 与 API 均验证可用。
 4. **API key 安全**：key 仅以环境变量临时传入，未写入仓库；建议测试后轮换。
 
+## Phase 6 — 表格修复后完整 33 页链路重跑 + interact 实测（2026-08-01）
+
+表格修复（`5b2818a`）后，用修复代码重新跑完整 `test1.pdf`（33 页）全链路，并补齐此前未实测的 interact 阶段。
+
+| 阶段 | 输入 → 输出 | 结果 |
+|---|---|---|
+| 3a 重跑 OCR | `test1.pdf` → `test1_final.ir.json` / `test1_final.html` | 33 页 / 665 块 / 8 表；**8 表列数全部一致（0 缺列）**；lint 146，与修复前一致（无回归） |
+| 3b 翻译 | `test1_final.ir.json` → `test1_final_translated.ir.json` | 444 块，concurrency=4；译文 HTML lint 146 → 38 |
+| 3b review | 译文 HTML → `test1_final_reviewed.html` | Grill 发现 39 项（修复前为 157 项）；Goal **108 assistant turns（226 messages）全部修复**；lint → 0 |
+| 3b beautify | reviewed HTML + PDF → `test1_final_beautified.html` | 502 个 right-edge 加 `near-right`；288 行 CSS 注入；lint 0、0 det、8 表完整 |
+| interact | beautified HTML → `test1_final_interacted.html` | 33 个 SourceBlock；全确认/skip round-trip 语义等价；编辑路径验证通过 |
+
+### interact 阶段发现并修复的 3 个问题
+
+1. **粒度**：splitter 只按 H2/H3/table/pre 切块，像素级 HTML 无 H2/H3 → 整份文档被当 1 个块，`e` 编辑会替换整个文档。修复：无标题结构时按顶层元素（页面 div）切块（`src/splitter/html-block-splitter.ts`）。
+2. **管道输入**：Bun readline 在非 TTY 下 `close` 先于 `line` 触发（崩溃或挂起）。修复：`stageInteract` 改为 stdin 行队列读取，`close` 后未消费输入按 `s`（跳过）处理。
+3. **外壳丢失**：`assembleHtmlBlocks` 只输出 body 内容，interact 会丢掉 `<head>`/`<style>`（整个 CSS 风格指南）。修复：保留 `<body>` 前后文档外壳。
+
+已知限制：像素级 HTML 的 interact 粒度为**页面级**（编辑替换整页 div）；语义 HTML 渲染器才有标题级粒度。
+
+### 测试与产物
+
+- 全量测试 63 → **65 pass / 0 fail**（新增：splitter 像素级切块 round-trip、CLI interact 管道编辑冒烟）；`tsc --noEmit` 0 错误。
+- 产物归档：`workdir/ir-e2e-final-2026-08-01/`（IR/译文/review/beautify/interact 全部 10 个文件 + 说明）。
+- 最终输出：`workdir/ir-e2e-final-2026-08-01/test1_final_beautified.html`（lint 0、0 det、8 表完整、33 页）；interact 产物 `test1_final_interacted.html` 与之语义等价。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
