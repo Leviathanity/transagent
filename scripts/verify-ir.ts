@@ -4,8 +4,10 @@
 // Runs the real Unlimited-OCR converter, renders the IR, and reports stats + lint.
 
 import { readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { stageConvertToIr } from "../src/pipeline/stage-convert.js";
 import { parseDocument } from "../src/utils/ir-serialization.js";
+import { inlineDocumentImages } from "../src/utils/inline-images.js";
 import { renderPixelPerfectHtml } from "../src/renderers/pixel-perfect.js";
 import { lintHtml } from "../src/utils/lint.js";
 
@@ -22,7 +24,7 @@ if (!r.success) {
   process.exit(1);
 }
 
-const ir = parseDocument(await readFile(irPath, "utf-8"));
+const ir = await inlineDocumentImages(parseDocument(await readFile(irPath, "utf-8")), dirname(irPath));
 const byType = new Map<string, number>();
 let tables = 0;
 let images = 0;

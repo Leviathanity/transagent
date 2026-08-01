@@ -11,6 +11,7 @@ import { stageInteract } from "../src/pipeline/stage-interact.js";
 import { stageBeautify } from "../src/pipeline/stage-beautify.js";
 import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
+import { inlineHtmlImages } from "../src/utils/inline-images.js";
 
 const cmd = process.argv[2];
 const subArgs = process.argv.slice(3);
@@ -132,6 +133,35 @@ if (cmd === "interact") {
   const outputPath = (values.output as string) ?? htmlPath.replace(/\.html$/, "_final.html");
   const r = await stageInteract(htmlPath, outputPath);
   process.exit(r.success ? 0 : 1);
+}
+
+// ─── ptl inline-images <file.html> [--image-dir <dir>] [--output <path>] ───
+if (cmd === "inline-images") {
+  const { values, positionals } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: {
+      "image-dir": { type: "string" },
+      output: { type: "string" },
+    },
+    strict: false,
+  });
+  const htmlPath = positionals[0];
+  if (!htmlPath) {
+    console.error("Usage: ptl inline-images <file.html> [--image-dir <dir>] [--output <path>]");
+    process.exit(1);
+  }
+
+  const imageDir = (values["image-dir"] as string | undefined) ?? dirname(htmlPath);
+  const outputPath =
+    (values.output as string | undefined) ?? htmlPath.replace(/\.html$/, "_embedded.html");
+  const html = await readFile(htmlPath, "utf-8");
+  const out = await inlineHtmlImages(html, imageDir);
+  await ensureDir(outputPath);
+  await writeFile(outputPath, out, "utf-8");
+  const inlined = (out.match(/src="data:/g) ?? []).length;
+  console.log(`Output: ${outputPath} (${inlined} images inlined as data URIs)`);
+  process.exit(0);
 }
 
 // ─── ptl beautify <file.html> <file.pdf> [--prompt <text>] [--output <path>] [--spec <path>] [--model <model>] ───

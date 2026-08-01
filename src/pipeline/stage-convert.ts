@@ -4,6 +4,7 @@ import { UnlimitedOCRConverter } from "../converters/unlimited-ocr.js";
 import { renderPixelPerfectHtml } from "../renderers/pixel-perfect.js";
 import { renderSemanticHtml } from "../renderers/semantic.js";
 import { serializeDocument } from "../utils/ir-serialization.js";
+import { inlineDocumentImages } from "../utils/inline-images.js";
 import { hasGeometry, type DocumentIR } from "../types/document-ir.js";
 import type { StageResult } from "../types/pipeline.js";
 
@@ -27,7 +28,11 @@ export async function stageConvert(
       outputPath ? dirname(resolve(outputPath)) : "",
       maxPages,
     );
-    const html = hasGeometry(ir) ? renderPixelPerfectHtml(ir) : renderSemanticHtml(ir);
+    const embedded = await inlineDocumentImages(
+      ir,
+      outputPath ? dirname(resolve(outputPath)) : undefined,
+    );
+    const html = hasGeometry(embedded) ? renderPixelPerfectHtml(embedded) : renderSemanticHtml(embedded);
     if (outputPath) {
       await mkdir(dirname(resolve(outputPath)), { recursive: true });
       await writeFile(outputPath, html, "utf-8");

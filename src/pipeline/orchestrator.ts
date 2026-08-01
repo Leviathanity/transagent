@@ -7,6 +7,7 @@ import { stageInteract } from "./stage-interact.js";
 import { ensureWorkDir, readIntermediate, writeFinalOutput } from "../utils/file-manager.js";
 import { WORKDIR_LAYOUT } from "../utils/file-manager.js";
 import { parseDocument } from "../utils/ir-serialization.js";
+import { inlineHtmlImages } from "../utils/inline-images.js";
 import { renderPixelPerfectHtml } from "../renderers/pixel-perfect.js";
 import { renderSemanticHtml } from "../renderers/semantic.js";
 import { hasGeometry } from "../types/document-ir.js";
@@ -16,6 +17,9 @@ const SPEC_REVIEW = "specs/review-layout.md";
 
 async function renderTranslatedHtml(irPath: string, htmlPath: string): Promise<void> {
   const ir = parseDocument(await readFile(irPath, "utf-8"));
+  // Keep image references relative here: review/beautify read this HTML and a
+  // Goal agent may inline whole pages into LLM context, so base64 payloads
+  // must only be embedded in the final output.
   const html = hasGeometry(ir) ? renderPixelPerfectHtml(ir) : renderSemanticHtml(ir);
   await writeFile(htmlPath, html, "utf-8");
 }
@@ -52,10 +56,14 @@ export async function runPipeline(config: PipelineConfig): Promise<void> {
   if (config.skipInteract) {
     console.log("Skipping interaction (CI mode)...");
     const content = await readIntermediate(wd, WORKDIR_LAYOUT.beautified);
-    await writeFinalOutput(config.outputPath, content);
+    const embedded = await inlineHtmlImages(content, wd);
+    await writeFinalOutput(config.outputPath, embedded);
     console.log(`Output: ${config.outputPath}`);
   } else {
     console.log("Starting interactive review...");
     await stageInteract(beautifiedPath, config.outputPath);
+    const content = await readFile(config.outputPath, "utf-8");
+    await writeFile(config.outputPath, await inlineHtmlImages(content, wd), "utf-8");
+    console.log(`Output: ${config.outputPath} (images inlined as data URIs)`);
   }
 }

@@ -158,6 +158,24 @@ bun run bin/ptl.ts translate test/test1.pdf --skip-interact   # 完整管线
 - 产物归档：`workdir/ir-e2e-final-2026-08-01/`（IR/译文/review/beautify/interact 全部 10 个文件 + 说明）。
 - 最终输出：`workdir/ir-e2e-final-2026-08-01/test1_final_beautified.html`（lint 0、0 det、8 表完整、33 页）；interact 产物 `test1_final_interacted.html` 与之语义等价。
 
+## Phase 7 — 图片自包含修复（2026-08-01）
+
+**问题**：转换阶段把图片导出为 `emb_*.png`/`vect_*.png` 旁车文件，HTML 只写相对路径；归档时未复制图片 → 所有归档 HTML 破图（38/38 引用悬空）。深层原因：IR 只存裸文件名，渲染产物依赖"HTML 与图片同目录"的隐式约定，资产打包责任外推给使用方。
+
+**修复（方案 1：渲染/输出时内嵌 data URI）**：
+
+1. 新增 `src/utils/inline-images.ts`：
+   - `inlineDocumentImages(ir, imageDir)`：IR 层内嵌（image 块 + 表格 cellImages），渲染器保持纯函数不变；
+   - `inlineHtmlImages(html, imageDir)`：HTML 层内嵌，用于既有产物；
+   - 文件缺失/不可读时保留原引用（不崩溃），data/http 引用原样跳过。
+2. 接入点：
+   - `ptl convert --output`：转换输出即自包含；
+   - 完整管线：review/beautify 中间阶段**保持相对引用**（避免 Goal 代理把 2.9MB base64 读进 LLM 上下文），最终输出（含 interact 后）自动内嵌；
+   - 新增 `ptl inline-images <file.html> [--image-dir <dir>] [--output <path>]` 命令，可对既有 HTML 做自包含化。
+3. 产物：`workdir/ir-e2e-final-2026-08-01/` 全部 HTML 已替换为内嵌版（38 张图 → data URI，约 2.9–3.0 MB），lint 0、0 det、8 表完整。
+
+**测试**：新增 `inline-images` 单测 7 项（嵌入/缺失保留/data·http 透传/IR 不突变/HTML 层替换）；全量 **72 pass / 0 fail**，`tsc --noEmit` 0 错误。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
