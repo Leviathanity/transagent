@@ -1,6 +1,8 @@
 import { readFile, readdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
+import { execa } from "execa";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -109,6 +111,36 @@ export function getLanAddresses(): string[] {
   return [...new Set(out)];
 }
 
+/** True for IPs that look like a physical LAN adapter (not loopback/APIPA/WSL NAT). */
+export function isHostLanCandidate(ip: string): boolean {
+  if (ip.startsWith("127.") || ip.startsWith("169.254.")) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(ip)) return false; // typical WSL/Hyper-V NAT range
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
+}
+
+/**
+ * Best-effort Windows host LAN IP detection (WSL only). Returns [] when
+ * interop is unavailable or the parse fails.
+ */
+export async function detectWindowsLanIp(): Promise<string[]> {
+  if (!existsSync("/proc/sys/fs/binfmt_misc/WSLInterop")) return [];
+  try {
+    const { stdout } = await execa("/mnt/c/Windows/System32/ipconfig.exe", [], {
+      timeout: 8000,
+    });
+    const ips: string[] = [];
+    for (const line of stdout.split(/\r?\n/)) {
+      const m = line.match(
+        /(?:IPv4[^\d]*|IPv4 地址[^\d]*|IP[- ]Address[^\d]*)(\d{1,3}(?:\.\d{1,3}){3})/i,
+      );
+      if (m && isHostLanCandidate(m[1])) ips.push(m[1]);
+    }
+    return [...new Set(ips)];
+  } catch {
+    return [];
+  }
+}
+
 export async function startResultServer(options: ResultServerOptions = {}) {
   const root = resolve(
     options.root ?? join(process.cwd(), "workdir", "ir-e2e-final-2026-08-01-v2"),
@@ -159,6 +191,22 @@ export async function startResultServer(options: ResultServerOptions = {}) {
     const lan = getLanAddresses();
     if (lan.length > 0) {
       console.log(`  局域网: ${lan.map((ip) => `http://${ip}:${server.port}/`).join("  /  ")}`);
+    }
+    if (existsSync("/proc/sys/fs/binfmt_misc/WSLInterop")) {
+      const hostIps = await detectWindowsLanIp();
+      if (hostIps.length > 0) {
+        console.log(
+          `  宿主机: ${hostIps.map((ip) => `http://${ip}:${server.port}/`).join("  /  ")}（局域网设备访问此地址）`,
+        );
+      }
+      if (lan.length > 0) {
+        console.log(
+          `  提示: WSL2 NAT 模式下，请先在 Windows 管理员终端执行端口转发与防火墙放行，` +
+            `局域网设备才能通过宿主机 IP 访问:\n` +
+            `    netsh interface portproxy add v4tov4 listenport=${server.port} listenaddress=0.0.0.0 connectport=${server.port} connectaddress=${lan[0]}\n` +
+            `    netsh advfirewall firewall add rule name="ptl-serve-${server.port}" dir=in action=allow protocol=TCP localport=${server.port}`,
+        );
+      }
     }
   }
   return server;

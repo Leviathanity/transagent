@@ -2,7 +2,11 @@ import { describe, it, expect, beforeAll, afterAll } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startResultServer, resolveWithinRoot } from "./result-server.js";
+import {
+  startResultServer,
+  resolveWithinRoot,
+  isHostLanCandidate,
+} from "./result-server.js";
 
 // The exec sandbox blocks listen(2) entirely; probe once so the server tests
 // are skipped there and run normally on a real machine.
@@ -26,6 +30,17 @@ describe("resolveWithinRoot", () => {
     expect(resolveWithinRoot(root, "/")).toBe("/tmp/ptl-root");
     expect(resolveWithinRoot(root, "/../secret")).toBeNull();
     expect(resolveWithinRoot(root, "/sub/../../secret")).toBeNull();
+  });
+});
+
+describe("isHostLanCandidate", () => {
+  it("accepts physical LAN IPs and rejects loopback/APIPA/WSL NAT", () => {
+    expect(isHostLanCandidate("192.168.2.118")).toBe(true);
+    expect(isHostLanCandidate("10.0.0.5")).toBe(true);
+    expect(isHostLanCandidate("127.0.0.1")).toBe(false);
+    expect(isHostLanCandidate("169.254.1.1")).toBe(false);
+    expect(isHostLanCandidate("172.22.164.215")).toBe(false);
+    expect(isHostLanCandidate("not-an-ip")).toBe(false);
   });
 });
 
