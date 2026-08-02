@@ -192,7 +192,12 @@ export async function startResultServer(options: ResultServerOptions = {}) {
     if (lan.length > 0) {
       console.log(`  局域网: ${lan.map((ip) => `http://${ip}:${server.port}/`).join("  /  ")}`);
     }
-    if (existsSync("/proc/sys/fs/binfmt_misc/WSLInterop")) {
+    const directLan = lan.some((ip) => isHostLanCandidate(ip));
+    if (directLan) {
+      console.log(
+        `  提示: 检测到 WSL 镜像/桥接网络，已直接监听宿主机局域网 IP，局域网设备可直接访问上面的局域网地址。`,
+      );
+    } else if (existsSync("/proc/sys/fs/binfmt_misc/WSLInterop")) {
       const hostIps = await detectWindowsLanIp();
       if (hostIps.length > 0) {
         console.log(
