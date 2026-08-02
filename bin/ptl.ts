@@ -12,6 +12,7 @@ import { stageBeautify } from "../src/pipeline/stage-beautify.js";
 import { runPipeline } from "../src/pipeline/orchestrator.js";
 import { detectDirection } from "../src/utils/direction-detector.js";
 import { inlineHtmlImages } from "../src/utils/inline-images.js";
+import { startResultServer } from "../src/utils/result-server.js";
 
 const cmd = process.argv[2];
 const subArgs = process.argv.slice(3);
@@ -164,6 +165,24 @@ if (cmd === "inline-images") {
   process.exit(0);
 }
 
+// ─── ptl serve [--port <n>] [--root <dir>] ───
+if (cmd === "serve") {
+  const { values } = (await import("node:util")).parseArgs({
+    args: subArgs,
+    allowPositionals: true,
+    options: {
+      port: { type: "string" },
+      root: { type: "string" },
+    },
+    strict: false,
+  });
+  await startResultServer({
+    port: values.port ? parseInt(values.port as string, 10) : undefined,
+    root: values.root as string | undefined,
+  });
+  await new Promise(() => {});
+}
+
 // ─── ptl beautify <file.html> <file.pdf> [--prompt <text>] [--output <path>] [--spec <path>] [--model <model>] ───
 if (cmd === "beautify") {
   if (Bun.env.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = Bun.env.DEEPSEEK_API_KEY;
@@ -293,6 +312,7 @@ Commands:
   review <file.html> --spec <path> [options]      Stage 3: Grill + Goal fix
   beautify <file.html> <file.pdf> [options]       Stage 4: Reference PDF to polish HTML
   interact <file.html> [--output <path>]          Interactive terminal Q&A
+  serve [--port <n>] [--root <dir>]               Static server for test result archives
   translate <file.pdf> [options]                  Full pipeline (1→4)
   check                                           Environment check
 

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "bun run bin/ptl.ts",
+    "serve": "bun run scripts/serve-results.ts",
     "test": "bun test",
     "typecheck": "bun run tsc --noEmit"
   },

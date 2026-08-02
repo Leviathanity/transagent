@@ -195,6 +195,21 @@ bun run bin/ptl.ts translate test/test1.pdf --skip-interact   # 完整管线
 
 **测试**：全量 **88 pass / 0 fail**（+12：text-metrics 4、lint 回归 3、table-repair 4、translation-prompts 2，另更新 stage-translate/renderer 断言），`tsc` 0 错误。
 
+## Phase 9 — 测试结果展示服务器（2026-08-01）
+
+新增 `ptl serve`（`scripts/serve-results.ts` / `src/utils/result-server.ts`）：
+
+- 默认监听 **0.0.0.0**（局域网可访问），默认根目录 `workdir/ir-e2e-final-2026-08-01-v2`；`--port`/`--root` 可覆盖；
+- 自动目录索引（文件名/大小/上级目录），正确 MIME（html/md/json/png 等），路径穿越防护（`resolveWithinRoot`）；
+- 启动时打印本机、局域网（自动探测非内部 IPv4）访问地址。
+
+```bash
+bun run bin/ptl.ts serve            # 或 bun run serve / npm run serve
+# 浏览器打开 http://localhost:8080/，局域网设备打开 http://<LAN-IP>:8080/
+```
+
+验证：服务器单测 4 项（索引、MIME、嵌套目录、404；沙箱禁止 listen 时自动 skip），实测 0.0.0.0:8080 索引与 2.85MB 最终 HTML 均 200；全量测试 **89 pass / 5 skip / 0 fail**，`tsc` 0 错误。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
