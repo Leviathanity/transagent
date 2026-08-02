@@ -261,31 +261,29 @@ bun run bin/ptl.ts serve            # 或 bun run serve / npm run serve
 6. **IR 契约扩展**：image 块新增 `identity`/`kind`/`placements`；渲染器跳过 icon/decor、content 带 `data-kind`；lint 对 icon/decor 豁免。
 7. **诊断脚本**：`scripts/diagnose-images.py` 输出 PDF 真值 vs IR 差异报告。
 
-### test2 基线（优化前，诊断脚本实测）
+### test2 实测（优化前 vs 优化后，2026-08-02 真实 GPU/LLM 回归）
 
-| 指标 | 优化前 | 预期（placement 级分类推演） |
+| 指标 | 优化前 | 优化后（实测） |
 |---|---:|---:|
 | PDF 图片放置 | 223 | 223 |
 | 唯一资源（xref/hash） | 11 | 11 |
-| 提取文件数（磁盘） | 223（144 重复） | 11 |
-| IR 独立 image 块 | 141 | ~1–2（content） |
-| 表格 cellImages | 82 | ~194（icon） |
-| decor（丢弃） | 0 | ~28 |
-| 几何偏差 >5px | 0 | 0 |
-| 空 src | 0 | 0 |
+| 提取文件数 | 223（144 重复） | 11 |
+| IR 独立 image 块 | 141 | **1** |
+| 表格 cellImages | 82 | **66**（4 个唯一图标资源） |
+| 提取后 lint | 59（45 项 image-content 噪声） | **10** |
+| 原始英文 HTML | 120,316 B | **32,712 B** |
+| 翻译后 lint | 55 | **10** |
+| review | 60 项 / 23 turns | **17 项 / 59 turns** |
+| 最终文件 | 127,764 B | **71,589 B**（自包含，lint 1 为盒模型误报） |
+| 几何偏差 >5px / 空 src | 0 / 0 | 0 / 0 |
 
-test1 推演：36 处放置全部 content，块数与现状持平（无回归风险）。
+真实回归全部通过：223 处放置 → 11 个唯一资源文件；图标（194 处）进表格 cellImages、装饰（28 处）丢弃、内容图保留 1 块；表格数据零丢失（CAS/EPDM 完好）；LLM 链路翻译/审查/美化/交互跑通。遗留：页 1 顶部 IMDS 标志为矢量/表单对象，矢量路径未捕获（前后版本均未提取，后续扩展 get_drawings/Form XObject）。
 
-### 待执行（需 GPU/API 权限）
+test1 推演：36 处放置全部 content，块数与现状持平（无回归风险，待真实回归确认）。
 
-```bash
-# 阶段 E 回归：新代码真实 OCR → 诊断对比 → LLM 链路
-bun run scripts/verify-ir.ts test/test2.pdf /tmp/ptl_ir_e2e/test2v2.ir.json /tmp/ptl_ir_e2e/test2v2.html
-PYTHONPYCACHEPREFIX=/tmp/pycache /root/ptl-ocr-env/bin/python3 scripts/diagnose-images.py test/test2.pdf /tmp/ptl_ir_e2e/test2v2.ir.json /tmp/ptl_ir_e2e
-bun run scripts/verify-ir.ts test/test1.pdf /tmp/ptl_ir_e2e/test1v2.ir.json /tmp/ptl_ir_e2e/test1v2.html
-```
+产物归档：`workdir/ir-e2e-test2-2026-08-02-v2/`（自包含 HTML + README）；HTTP 展示：`ptl serve`（默认根自动选最新归档）。
 
-全量测试 99 项（0 fail，5 项沙箱 skip），`tsc` 0 错误，`py_compile` 通过。改动暂存于工作区（当轮环境禁止提权提交，待批准后推送）。
+全量测试 99 项（0 fail，5 项沙箱 skip），`tsc` 0 错误，`py_compile` 通过。
 
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
