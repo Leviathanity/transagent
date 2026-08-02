@@ -120,6 +120,43 @@ describe("renderPixelPerfectHtml", () => {
     expect(html).toContain('alt="logo"');
   });
 
+  it("skips icon/decor images and tags content images with data-kind", () => {
+    const ir2: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1448,
+          blocks: [
+            {
+              id: "i1",
+              type: "image",
+              level: 0,
+              text: "",
+              src: "icon.png",
+              alt: "",
+              kind: "icon",
+              geometry: { x: 10, y: 10, width: 17, height: 17 },
+            },
+            {
+              id: "i2",
+              type: "image",
+              level: 0,
+              text: "",
+              src: "logo.png",
+              alt: "CEE",
+              kind: "content",
+              geometry: { x: 100, y: 100, width: 100, height: 50 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(ir2);
+    expect(out).not.toContain("icon.png");
+    expect(out).toContain('data-kind="content"');
+    expect(out).toContain('src="logo.png"');
+  });
+
   it("right-aligns page numbers", () => {
     expect(html).toContain("text-align:right;");
   });

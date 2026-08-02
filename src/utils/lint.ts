@@ -87,6 +87,9 @@ export function lintHtml(
       const nowrap = s.includes("white-space:nowrap");
       let text = (el.textContent || "").trim();
       const cls = el.className || "";
+      const imgKind = el.getAttribute("data-kind");
+      // Icons/decorations are not content-level elements; never lint them
+      if (imgKind === "icon" || imgKind === "decor") continue;
       // linkedom ignores <img> alt in textContent — extract manually
       if (!text && cls.includes("det-image")) {
         const img = el.querySelector("img");

@@ -62,6 +62,12 @@ export interface ImageSourceBlock extends BaseSourceBlock {
   type: "image";
   src: string;
   alt: string;
+  /** Resource identity from the source PDF (xref / content hash). */
+  identity?: { xref?: number; hash?: string; sourceName?: string };
+  /** Image role: content / icon / decor / vector. */
+  kind?: "content" | "icon" | "decor" | "vector";
+  /** All placements of this resource across the document (page + display coords). */
+  placements?: { page: number; x: number; y: number; width: number; height: number }[];
 }
 
 export type TextSourceBlock = BaseSourceBlock & {

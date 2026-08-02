@@ -247,6 +247,46 @@ bun run bin/ptl.ts serve            # 或 bun run serve / npm run serve
 
 产物归档：`workdir/ir-e2e-test2-2026-08-02/`（原始英文 HTML、IR、译文、review/beautify/interact + 报告 + README，HTML 均为自包含内嵌版）。
 
+## Phase 12 — 图像提取双路径权重实施（2026-08-02）
+
+依据 `docs/specs/2026-08-02-image-extraction-dual-path-weighting.md` 实施（阶段 A–D 代码完成，阶段 E 真实 GPU 回归待环境允许后执行）：
+
+### 代码改动
+
+1. **身份层**：`pdf_to_ir.py` 用 `get_image_info(xrefs=True, hashes=True)` 建立唯一资源表（xref/内容 hash），同一资源只提取一次（`img_x{xref}.png`），跨页/跨方向复用不重复建文件；出现位置以 `placements[]` 记录。
+2. **分类层（placement 级）**：`placement_kind` 先判 decor（细长分隔线/右缘条带），再判 icon（最大边 <40px 且重复 ≥3，如 17×17 树级图标、19×36 行标记），其余为 content；配置项进入 `PtlConfig.extraction`。
+3. **几何统一**：图像块几何一律来自 PDF bbox（代码路径），OCR det 不再作为图像几何来源；文本/表格块保持 OCR 语义，冲突留待诊断。
+4. **表格吸收**：icon/decor 不建独立块；表格内 icon → `cellImages`，表格外 icon/decor 丢弃。
+5. **矢量路径**：`get_drawings()` 填充路径聚类取代"间隙光栅"启发式，输出 `kind=vector` 块。
+6. **IR 契约扩展**：image 块新增 `identity`/`kind`/`placements`；渲染器跳过 icon/decor、content 带 `data-kind`；lint 对 icon/decor 豁免。
+7. **诊断脚本**：`scripts/diagnose-images.py` 输出 PDF 真值 vs IR 差异报告。
+
+### test2 基线（优化前，诊断脚本实测）
+
+| 指标 | 优化前 | 预期（placement 级分类推演） |
+|---|---:|---:|
+| PDF 图片放置 | 223 | 223 |
+| 唯一资源（xref/hash） | 11 | 11 |
+| 提取文件数（磁盘） | 223（144 重复） | 11 |
+| IR 独立 image 块 | 141 | ~1–2（content） |
+| 表格 cellImages | 82 | ~194（icon） |
+| decor（丢弃） | 0 | ~28 |
+| 几何偏差 >5px | 0 | 0 |
+| 空 src | 0 | 0 |
+
+test1 推演：36 处放置全部 content，块数与现状持平（无回归风险）。
+
+### 待执行（需 GPU/API 权限）
+
+```bash
+# 阶段 E 回归：新代码真实 OCR → 诊断对比 → LLM 链路
+bun run scripts/verify-ir.ts test/test2.pdf /tmp/ptl_ir_e2e/test2v2.ir.json /tmp/ptl_ir_e2e/test2v2.html
+PYTHONPYCACHEPREFIX=/tmp/pycache /root/ptl-ocr-env/bin/python3 scripts/diagnose-images.py test/test2.pdf /tmp/ptl_ir_e2e/test2v2.ir.json /tmp/ptl_ir_e2e
+bun run scripts/verify-ir.ts test/test1.pdf /tmp/ptl_ir_e2e/test1v2.ir.json /tmp/ptl_ir_e2e/test1v2.html
+```
+
+全量测试 99 项（0 fail，5 项沙箱 skip），`tsc` 0 错误，`py_compile` 通过。改动暂存于工作区（当轮环境禁止提权提交，待批准后推送）。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。

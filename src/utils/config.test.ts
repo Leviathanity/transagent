@@ -20,6 +20,8 @@ describe("loadConfig", () => {
     expect(cfg.page.width).toBe(1024);
     expect(cfg.paths.workDir).toBe("workdir");
     expect(cfg.lint.minOverlapY).toBe(5);
+    expect(cfg.extraction.iconSizePx).toBe(40);
+    expect(cfg.extraction.tableImageOverlapRatio).toBe(0.5);
     expect(DEFAULT_CONFIG.ocr.modelPath).toContain("Unlimited-OCR");
   });
 

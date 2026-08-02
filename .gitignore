@@ -1,4 +1,5 @@
 node_modules/
 dist/
 workdir/
+scripts/ocr/__pycache__/
 .env

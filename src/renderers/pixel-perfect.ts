@@ -80,9 +80,13 @@ function renderBlock(b: SourceBlock): string {
   }
 
   if (b.type === "image") {
+    // Icons/decorations live inside table cells or are skipped entirely;
+    // only content-like images become standalone elements.
+    if (b.kind === "icon" || b.kind === "decor") return "";
     const sty = `position:absolute;left:${g.x}px;top:${g.y}px;width:${g.width}px;height:${g.height}px;z-index:2;`;
     const alt = b.alt.replace(/"/g, "&quot;");
-    return `<div class="det-image" style="${sty}"><img src="${escapeHtml(b.src)}" alt="${alt}" style="width:100%;height:100%;object-fit:contain;"></div>`;
+    const kindAttr = b.kind ? ` data-kind="${b.kind}"` : "";
+    return `<div class="det-image"${kindAttr} style="${sty}"><img src="${escapeHtml(b.src)}" alt="${alt}" style="width:100%;height:100%;object-fit:contain;"></div>`;
   }
 
   const safe = escapeHtml(b.text);

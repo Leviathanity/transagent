@@ -174,9 +174,15 @@ describe("IR pipeline integration (no GPU / no LLM)", () => {
   });
 
   it("external OCR script is present and compiles", () => {
-    const result = spawnSync("python3", ["-m", "py_compile", "scripts/ocr/pdf_to_ir.py"], {
-      encoding: "utf-8",
-    });
+    const result = spawnSync(
+      "python3",
+      ["-m", "py_compile", "scripts/ocr/pdf_to_ir.py", "scripts/diagnose-images.py"],
+      {
+        encoding: "utf-8",
+        // compile into a temp cache so read-only checkouts still pass
+        env: { ...process.env, PYTHONPYCACHEPREFIX: "/tmp/ptl-pycache" },
+      },
+    );
     expect(result.status).toBe(0);
   });
 });

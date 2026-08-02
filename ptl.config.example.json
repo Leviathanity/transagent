@@ -27,5 +27,18 @@
   },
   "beautify": { "nearRightPx": 150, "rightAdjustPx": 16, "rightAdjustMinLeft": 100 },
   "toc": { "shortLineMax": 60 },
-  "lint": { "minOverlapY": 5 }
+  "lint": { "minOverlapY": 5 },
+  "extraction": {
+    "iconSizePx": 40,
+    "iconRepeatMin": 3,
+    "decorAspectRatio": 5,
+    "decorMinDim": 24,
+    "decorRightEdgeRatio": 0.75,
+    "decorMinLen": 128,
+    "decorMaxMinDim": 64,
+    "vectorMinArea": 5000,
+    "vectorNonWhiteValue": 235,
+    "vectorNonWhiteRatio": 0.03,
+    "tableImageOverlapRatio": 0.5
+  }
 }

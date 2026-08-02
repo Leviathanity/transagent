@@ -84,4 +84,36 @@ describe("normalizeOcrPayload", () => {
       "sb_0_5",
     ]);
   });
+
+  it("carries image identity/kind/placements into the IR", () => {
+    const ir = normalizeOcrPayload({
+      pages: [
+        {
+          width: 1024,
+          height: 1448,
+          blocks: [
+            {
+              type: "image",
+              bbox: [100, 100, 200, 200],
+              src: "img_x42.png",
+              alt: "logo",
+              identity: { xref: 42, hash: "abc123", sourceName: "img_x42.png" },
+              kind: "content",
+              placements: [
+                { page: 0, x: 100, y: 100, width: 100, height: 100 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const block = ir.pages[0].blocks[0];
+    if (block.type === "image") {
+      expect(block.identity?.xref).toBe(42);
+      expect(block.kind).toBe("content");
+      expect(block.placements?.length).toBe(1);
+    } else {
+      throw new Error("expected image block");
+    }
+  });
 });

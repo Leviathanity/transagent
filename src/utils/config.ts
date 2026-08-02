@@ -28,6 +28,20 @@ export interface PtlConfig {
   beautify: { nearRightPx: number; rightAdjustPx: number; rightAdjustMinLeft: number };
   toc: { shortLineMax: number };
   lint: { minOverlapY: number };
+  extraction: {
+    /** Max dimension (display px) for a repeated image to be treated as an icon. */
+    iconSizePx: number;
+    iconRepeatMin: number;
+    decorAspectRatio: number;
+    decorMinDim: number;
+    decorRightEdgeRatio: number;
+    decorMinLen: number;
+    decorMaxMinDim: number;
+    vectorMinArea: number;
+    vectorNonWhiteValue: number;
+    vectorNonWhiteRatio: number;
+    tableImageOverlapRatio: number;
+  };
 }
 
 export const DEFAULT_CONFIG: PtlConfig = {
@@ -66,6 +80,19 @@ export const DEFAULT_CONFIG: PtlConfig = {
   beautify: { nearRightPx: 150, rightAdjustPx: 16, rightAdjustMinLeft: 100 },
   toc: { shortLineMax: 60 },
   lint: { minOverlapY: 5 },
+  extraction: {
+    iconSizePx: 40,
+    iconRepeatMin: 3,
+    decorAspectRatio: 5,
+    decorMinDim: 24,
+    decorRightEdgeRatio: 0.75,
+    decorMinLen: 128,
+    decorMaxMinDim: 64,
+    vectorMinArea: 5000,
+    vectorNonWhiteValue: 235,
+    vectorNonWhiteRatio: 0.03,
+    tableImageOverlapRatio: 0.5,
+  },
 };
 
 type DeepPartial<T> = {
@@ -121,6 +148,8 @@ function loadEnvConfig(): DeepPartial<PtlConfig> {
   if (env.PTL_TRANSLATE_MODEL) cfg.models = { ...cfg.models, translate: env.PTL_TRANSLATE_MODEL };
   if (env.PTL_REVIEW_MODEL) cfg.models = { ...cfg.models, review: env.PTL_REVIEW_MODEL };
   if (env.PTL_BEAUTIFY_MODEL) cfg.models = { ...cfg.models, beautify: env.PTL_BEAUTIFY_MODEL };
+  if (env.PTL_ICON_SIZE_PX)
+    cfg.extraction = { ...cfg.extraction, iconSizePx: parseInt(env.PTL_ICON_SIZE_PX, 10) };
   return cfg;
 }
 

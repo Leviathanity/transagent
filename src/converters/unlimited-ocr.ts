@@ -25,6 +25,9 @@ export interface OcrBlockPayload {
   alt?: string;
   font?: FontStyle;
   table_images?: CellImageRef[];
+  identity?: { xref?: number; hash?: string; sourceName?: string };
+  kind?: "content" | "icon" | "decor" | "vector";
+  placements?: { page: number; x: number; y: number; width: number; height: number }[];
 }
 
 export interface OcrPagePayload {
@@ -107,7 +110,15 @@ export function normalizeOcrPayload(payload: OcrPayload): DocumentIR {
           };
         }
         if (type === "image") {
-          return { ...base, type, src: raw.src ?? "", alt: raw.alt ?? "" };
+          return {
+            ...base,
+            type,
+            src: raw.src ?? "",
+            alt: raw.alt ?? "",
+            ...(raw.identity ? { identity: raw.identity } : {}),
+            ...(raw.kind ? { kind: raw.kind } : {}),
+            ...(raw.placements ? { placements: raw.placements } : {}),
+          };
         }
         return { ...base, type, text: raw.text ?? "" };
       }),
@@ -156,6 +167,17 @@ export class UnlimitedOCRConverter implements Converter {
       table_near_px: cfg.ocr.tableNearPx,
       non_white_value: cfg.ocr.nonWhiteValue,
       non_white_ratio: cfg.ocr.nonWhiteRatio,
+      icon_size_px: cfg.extraction.iconSizePx,
+      icon_repeat_min: cfg.extraction.iconRepeatMin,
+      decor_aspect_ratio: cfg.extraction.decorAspectRatio,
+      decor_min_dim: cfg.extraction.decorMinDim,
+      decor_right_edge_ratio: cfg.extraction.decorRightEdgeRatio,
+      decor_min_len: cfg.extraction.decorMinLen,
+      decor_max_min_dim: cfg.extraction.decorMaxMinDim,
+      vector_min_area: cfg.extraction.vectorMinArea,
+      vector_non_white_value: cfg.extraction.vectorNonWhiteValue,
+      vector_non_white_ratio: cfg.extraction.vectorNonWhiteRatio,
+      table_image_overlap_ratio: cfg.extraction.tableImageOverlapRatio,
     };
 
     const python = insideWsl ? cfg.ocr.python : "wsl";
