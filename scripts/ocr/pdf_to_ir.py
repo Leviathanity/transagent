@@ -52,14 +52,15 @@ tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 mat = fitz.Matrix(300 / 72, 300 / 72)
 max_pages = args.get("max_pages", len(doc))
 
-# Compute page dimensions: PDF pt → 300 DPI px → model/display space
+# Compute page dimensions: PDF pt → DPI px → model/display space
 PDF_PT_W = doc[0].rect.width
 PDF_PT_H = doc[0].rect.height
-page_w = int(PDF_PT_W * 300 / 72)
-page_h = int(PDF_PT_H * 300 / 72)
-PDF_TO_PAGE = 300 / 72
-MODEL_SIZE = 1024
-PAGE_W = 1024
+dpi = args.get("dpi", 300)
+PDF_TO_PAGE = dpi / 72
+MODEL_SIZE = args.get("model_size", 1024)
+PAGE_W = args.get("page_width", 1024)
+page_w = int(PDF_PT_W * PDF_TO_PAGE)
+page_h = int(PDF_PT_H * PDF_TO_PAGE)
 PAGE_H = int(PAGE_W * (page_h / page_w))
 
 images = []
@@ -117,7 +118,8 @@ for i in range(max_pages):
 doc.close()
 
 # Sequential inference (CUDA + sys.stdout not thread-safe for parallelism)
-os.makedirs("/tmp/ptl_ocr_out", exist_ok=True)
+ocr_out = args.get("ocr_output_dir") or os.path.join(tmp_dir, "model_out")
+os.makedirs(ocr_out, exist_ok=True)
 old_stdout = sys.stdout
 sys.stdout = buf = io.StringIO()
 for img in images:
@@ -125,13 +127,13 @@ for img in images:
         tok,
         prompt="<image>document parsing.",
         image_file=img,
-        output_path="/tmp/ptl_ocr_out",
-        base_size=1024,
-        image_size=1024,
-        crop_mode=False,
-        max_length=32768,
-        no_repeat_ngram_size=35,
-        ngram_window=128,
+        output_path=ocr_out,
+        base_size=args.get("base_size", 1024),
+        image_size=args.get("image_size", 1024),
+        crop_mode=args.get("crop_mode", False),
+        max_length=args.get("max_length", 32768),
+        no_repeat_ngram_size=args.get("no_repeat_ngram_size", 35),
+        ngram_window=args.get("ngram_window", 128),
     )
     print("<PAGE_BREAK>", flush=True)
 sys.stdout = old_stdout
@@ -159,7 +161,9 @@ def parse_blocks(text):
     return blocks
 
 
-def dedup_blocks(blocks, threshold=15):
+def dedup_blocks(blocks, threshold=None):
+    if threshold is None:
+        threshold = args.get("dedup_threshold", 15)
     kept = []
     for b in blocks:
         text = b["content"].strip()
@@ -225,7 +229,7 @@ for pi, blocks in enumerate(pages):
         matching = []
         for s in spans:
             oa = bbox_overlap(ob, s["bbox"])
-            if oa > 0 and oa / span_area(s["bbox"]) > 0.25:
+            if oa > 0 and oa / span_area(s["bbox"]) > args.get("font_overlap_ratio", 0.25):
                 matching.append((oa, s))
         if matching:
             matching.sort(key=lambda x: -x[0])
@@ -252,7 +256,7 @@ for pi, page_blocks in enumerate(pages):
             continue
         for img_file, img_bbox in page_imgs:
             overlap = bbox_overlap(ob, img_bbox)
-            if overlap / ob_area > 0.3:
+            if overlap / ob_area > args.get("image_overlap_ratio", 0.3):
                 b["type"] = "image"
                 b["src"] = img_file
                 b["img_bbox"] = img_bbox
@@ -289,10 +293,16 @@ for pi, page_blocks in enumerate(pages):
     if not os.path.exists(png_path):
         continue
 
+    gap_min = args.get("vector_gap_min", 120)
+    gap_max_ratio = args.get("vector_gap_max_ratio", 0.7)
+    table_overlap_ratio = args.get("table_overlap_ratio", 0.3)
+    table_near_px = args.get("table_near_px", 200)
+    non_white_value = args.get("non_white_value", 235)
+    non_white_ratio = args.get("non_white_ratio", 0.03)
     prev_end = 60
     for y1, y2 in occupied:
         gap_h = y1 - prev_end
-        if gap_h >= 120 and gap_h <= PAGE_H * 0.7:
+        if gap_h >= gap_min and gap_h <= PAGE_H * gap_max_ratio:
             my1 = prev_end / PAGE_H * MODEL_SIZE
             my2 = y1 / PAGE_H * MODEL_SIZE
             gap_bbox = (0, my1, MODEL_SIZE, my2)
@@ -301,7 +311,7 @@ for pi, page_blocks in enumerate(pages):
             for tb in page_tables_bb:
                 ov = bbox_overlap(gap_bbox, tb)
                 tb_bottom = tb[3] / MODEL_SIZE * PAGE_H
-                if ov / max(gap_area, 1) > 0.3 or (prev_end - tb_bottom) < 200:
+                if ov / max(gap_area, 1) > table_overlap_ratio or (prev_end - tb_bottom) < table_near_px:
                     overlaps_table = True
                     break
             if overlaps_table:
@@ -314,8 +324,8 @@ for pi, page_blocks in enumerate(pages):
                 crop = full.crop((0, ry1, page_w, ry2))
                 gray = crop.convert("L")
                 pixels = list(gray.getdata())
-                non_white = sum(1 for p in pixels if p < 235)
-                if non_white > len(pixels) * 0.03:
+                non_white = sum(1 for p in pixels if p < non_white_value)
+                if non_white > len(pixels) * non_white_ratio:
                     crop_name = f"vect_p{pi:04d}_g{len(page_blocks)}.png"
                     crop_path = os.path.join(output_dir, crop_name) if output_dir else ""
                     crop.save(crop_path)

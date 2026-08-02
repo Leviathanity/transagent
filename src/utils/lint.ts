@@ -1,5 +1,6 @@
 import { parseHTML } from "linkedom";
 import { maxLineTextWidth, estimateLineCount } from "./text-metrics.js";
+import { DEFAULT_CONFIG } from "./config.js";
 
 export interface LintIssue {
   severity: "error" | "warning" | "info";
@@ -50,7 +51,11 @@ const FIX_HINTS: Record<string, string> = {
   "content-content": "内容元素重叠 → 调整其中一个元素的 top 或 left 避免碰撞",
 };
 
-export function lintHtml(html: string): LintIssue[] {
+export function lintHtml(
+  html: string,
+  opts?: { minOverlapY?: number },
+): LintIssue[] {
+  const minOverlapY = opts?.minOverlapY ?? DEFAULT_CONFIG.lint.minOverlapY;
   const issues: LintIssue[] = [];
   const { document } = parseHTML(html);
   const pages = [...document.querySelectorAll(".page")] as Element[];
@@ -135,7 +140,7 @@ export function lintHtml(html: string): LintIssue[] {
         const yOverlap = a.top < b.bottom && a.bottom > b.top;
         if (xOverlap && yOverlap) {
           const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-          if (overlapY > 5) {
+          if (overlapY > minOverlapY) {
             const st = overlapType(a.etype, b.etype);
             issues.push({
               severity: "error",

@@ -6,7 +6,9 @@ import {
   startResultServer,
   resolveWithinRoot,
   isHostLanCandidate,
+  pickLatestArchive,
 } from "./result-server.js";
+import { utimes } from "node:fs/promises";
 
 // The exec sandbox blocks listen(2) entirely; probe once so the server tests
 // are skipped there and run normally on a real machine.
@@ -41,6 +43,20 @@ describe("isHostLanCandidate", () => {
     expect(isHostLanCandidate("169.254.1.1")).toBe(false);
     expect(isHostLanCandidate("172.22.164.215")).toBe(false);
     expect(isHostLanCandidate("not-an-ip")).toBe(false);
+  });
+});
+
+describe("pickLatestArchive", () => {
+  it("selects the newest ir-e2e-final-* directory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ptl-archive-"));
+    const old = join(dir, "ir-e2e-final-2026-07-31");
+    const fresh = join(dir, "ir-e2e-final-2026-08-01");
+    await Bun.$`mkdir -p ${old} ${fresh}`.quiet();
+    const base = new Date("2026-08-01T00:00:00Z").getTime() / 1000;
+    await utimes(old, base, base);
+    await utimes(fresh, base + 100, base + 100);
+    expect(pickLatestArchive(dir)).toBe(fresh);
+    expect(pickLatestArchive(join(dir, "missing"))).toBeNull();
   });
 });
 

@@ -2,7 +2,6 @@
 // bin/ptl.ts
 
 import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
-import { createInterface } from "node:readline";
 import { basename, dirname } from "node:path";
 import { stageConvert } from "../src/pipeline/stage-convert.js";
 import { stageReview } from "../src/pipeline/stage-review.js";
@@ -10,9 +9,9 @@ import { stageTranslate } from "../src/pipeline/stage-translate.js";
 import { stageInteract } from "../src/pipeline/stage-interact.js";
 import { stageBeautify } from "../src/pipeline/stage-beautify.js";
 import { runPipeline } from "../src/pipeline/orchestrator.js";
-import { detectDirection } from "../src/utils/direction-detector.js";
 import { inlineHtmlImages } from "../src/utils/inline-images.js";
 import { startResultServer } from "../src/utils/result-server.js";
+import { loadConfig } from "../src/utils/config.js";
 
 const cmd = process.argv[2];
 const subArgs = process.argv.slice(3);
@@ -261,10 +260,12 @@ if (cmd === "translate") {
     options: {
       direction: { type: "string" },
       glossary: { type: "string" },
-      "review-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
-      "translate-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
-      "beautify-model": { type: "string", default: "deepseek/deepseek-v4-flash" },
-      "beautify-spec": { type: "string", default: "specs/beautify-layout.md" },
+      "review-model": { type: "string" },
+      "translate-model": { type: "string" },
+      "beautify-model": { type: "string" },
+      "review-spec": { type: "string" },
+      "beautify-spec": { type: "string" },
+      "work-dir": { type: "string" },
       concurrency: { type: "string", default: "3" },
       "skip-interact": { type: "boolean", default: false },
       output: { type: "string" },
@@ -274,31 +275,25 @@ if (cmd === "translate") {
   const inputPath = positionals[0];
   if (!inputPath) { console.error("Error: Missing input file."); process.exit(1); }
 
-  let direction: "en2zh" | "zh2en";
-  if (values.direction === "zh2en" || values.direction === "en2zh") {
-    direction = values.direction;
-  } else {
-    const content = await readFile(inputPath, "utf-8").catch(() => "");
-    direction = detectDirection(content.slice(0, 500));
-    console.log(`Auto-detected direction: ${direction === "zh2en" ? "中文→英文" : "英文→中文"}`);
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const confirm = await new Promise<string>(res => rl.question("确认？[Y/n]: ", res));
-    rl.close();
-    if (confirm.toLowerCase() === "n") { console.error("Aborted."); process.exit(1); }
-  }
+  const cfg = loadConfig();
+  const direction: "en2zh" | "zh2en" | undefined =
+    values.direction === "zh2en" || values.direction === "en2zh"
+      ? (values.direction as "en2zh" | "zh2en")
+      : undefined;
 
   await runPipeline({
     inputPath,
     outputPath: (values.output as string) ?? inputPath.replace(/\.pdf$/i, "") + "_translated.html",
     direction,
     glossaryPath: values.glossary as string | undefined,
-    reviewModel: values["review-model"] as string,
-    translateModel: values["translate-model"] as string,
-    beautifyModel: values["beautify-model"] as string,
-    beautifySpec: values["beautify-spec"] as string,
+    reviewModel: (values["review-model"] as string | undefined) ?? cfg.models.review,
+    translateModel: (values["translate-model"] as string | undefined) ?? cfg.models.translate,
+    beautifyModel: (values["beautify-model"] as string | undefined) ?? cfg.models.beautify,
+    reviewSpec: (values["review-spec"] as string | undefined) ?? cfg.paths.reviewSpec,
+    beautifySpec: (values["beautify-spec"] as string | undefined) ?? cfg.paths.beautifySpec,
     concurrency: parseInt(values.concurrency as string),
     skipInteract: values["skip-interact"] as boolean,
-    workDir: "workdir",
+    workDir: (values["work-dir"] as string | undefined) ?? cfg.paths.workDir,
   });
   process.exit(0);
 }
@@ -322,7 +317,9 @@ Options for translate:
   --review-model <model>      Model for review (default: deepseek/deepseek-v4-flash)
   --translate-model <model>   Model for translation (default: deepseek/deepseek-v4-flash)
   --beautify-model <model>    Model for beautify (default: deepseek/deepseek-v4-flash)
+  --review-spec <path>        Review spec (default: specs/review-layout.md)
   --beautify-spec <path>      Beautify spec (default: specs/beautify-layout.md)
+  --work-dir <dir>            Intermediate work directory (default: workdir)
   --concurrency <n>           Translation concurrency (default: 3)
   --skip-interact             Skip interactive review (CI mode)
   --output <path>             Output path`);

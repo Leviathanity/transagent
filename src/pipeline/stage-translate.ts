@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { loadGlossary } from "../glossary/loader.js";
 import { formatForPrompt } from "../glossary/matcher.js";
 import { buildTranslatorSystemPrompt } from "../agents/translator.js";
+import { loadConfig } from "../utils/config.js";
 import {
   buildBlockPrompt,
   buildTablePrompt,
@@ -85,7 +86,10 @@ export async function stageTranslate(
       page.blocks.forEach((block, bi) => allBlocks.push({ page: pi, index: bi, block }));
     });
 
-    const tocGroups = groupTocBlocks(allBlocks.map((b) => b.block));
+    const tocGroups = groupTocBlocks(
+      allBlocks.map((b) => b.block),
+      loadConfig().toc.shortLineMax,
+    );
     const tocGroupIds = new Set(tocGroups.flatMap((g) => g.ids));
     const toTranslate = allBlocks.filter(
       (b) => !tocGroupIds.has(b.block.id) && !isSkippable(b.block),

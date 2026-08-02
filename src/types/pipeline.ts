@@ -16,12 +16,14 @@ export interface ReviewReport {
 export interface PipelineConfig {
   inputPath: string;
   outputPath: string;
-  direction: "en2zh" | "zh2en";
+  /** Optional: when omitted the pipeline auto-detects from converted IR text. */
+  direction?: "en2zh" | "zh2en";
   glossaryPath?: string;
   reviewModel: string;
   translateModel: string;
   beautifyModel: string;
   beautifySpec: string;
+  reviewSpec?: string;
   concurrency: number;
   skipInteract: boolean;
   workDir: string;

@@ -1,6 +1,13 @@
-import type { SeparatedBlock, SourceBlock, BlockType } from "../types/source-block.js";
 import { parseHTML } from "linkedom";
 import { parseTableHtml } from "../utils/table-cells.js";
+import type { SourceBlock, SourceBlockType } from "../types/document-ir.js";
+
+export type BlockType = SourceBlockType;
+
+export interface SeparatedBlock {
+  block: SourceBlock;
+  separatorBefore: string;
+}
 
 function serializeNode(node: any): string {
   if (node.nodeType === 3) return node.textContent ?? "";
@@ -53,7 +60,7 @@ function makeBlock(
   return {
     block: { id, type: textType, level, text },
     separatorBefore,
-  };
+  } as SeparatedBlock;
 }
 
 export function splitHtmlToBlocks(html: string): SeparatedBlock[] {

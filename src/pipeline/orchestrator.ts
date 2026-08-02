@@ -8,12 +8,28 @@ import { ensureWorkDir, readIntermediate, writeFinalOutput } from "../utils/file
 import { WORKDIR_LAYOUT } from "../utils/file-manager.js";
 import { parseDocument } from "../utils/ir-serialization.js";
 import { inlineHtmlImages } from "../utils/inline-images.js";
+import { loadConfig } from "../utils/config.js";
+import { detectDirection } from "../utils/direction-detector.js";
 import { renderPixelPerfectHtml } from "../renderers/pixel-perfect.js";
 import { renderSemanticHtml } from "../renderers/semantic.js";
-import { hasGeometry } from "../types/document-ir.js";
+import { hasGeometry, type DocumentIR } from "../types/document-ir.js";
 import type { PipelineConfig } from "../types/pipeline.js";
 
-const SPEC_REVIEW = "specs/review-layout.md";
+const CONFIG = loadConfig();
+
+function collectTextSample(ir: DocumentIR, maxChars = 2000): string {
+  const parts: string[] = [];
+  let len = 0;
+  for (const page of ir.pages) {
+    for (const block of page.blocks) {
+      if (!block.text) continue;
+      parts.push(block.text);
+      len += block.text.length;
+      if (len >= maxChars) return parts.join("\n");
+    }
+  }
+  return parts.join("\n");
+}
 
 async function renderTranslatedHtml(irPath: string, htmlPath: string): Promise<void> {
   const ir = parseDocument(await readFile(irPath, "utf-8"));
@@ -33,9 +49,16 @@ export async function runPipeline(config: PipelineConfig): Promise<void> {
   const r1 = await stageConvertToIr(config.inputPath, originalIr);
   if (!r1.success) { console.error(`Conversion failed: ${r1.error}`); process.exit(1); }
 
+  const irForDirection = parseDocument(await readFile(originalIr, "utf-8"));
+  const direction =
+    config.direction ?? detectDirection(collectTextSample(irForDirection));
+  if (!config.direction) {
+    console.log(`  Auto-detected direction: ${direction === "en2zh" ? "英文→中文" : "中文→英文"}`);
+  }
+
   console.log("[2/4] Translating...");
   const translatedIr = `${wd}/${WORKDIR_LAYOUT.translatedIr}`;
-  const r2 = await stageTranslate(config.glossaryPath, config.direction, config.concurrency, config.translateModel, originalIr, translatedIr);
+  const r2 = await stageTranslate(config.glossaryPath, direction, config.concurrency, config.translateModel, originalIr, translatedIr);
   if (!r2.success) { console.error(`Translation failed: ${r2.error}`); process.exit(1); }
 
   console.log("  Rendering translated IR → HTML...");
@@ -45,7 +68,8 @@ export async function runPipeline(config: PipelineConfig): Promise<void> {
   console.log("[3/4] Reviewing formatting...");
   const reviewedPath = `${wd}/${WORKDIR_LAYOUT.reviewed}`;
   const formatReport = `${wd}/${WORKDIR_LAYOUT.formatReport}`;
-  const r3 = await stageReview(SPEC_REVIEW, reviewInput, formatReport, reviewedPath, config.reviewModel);
+  const reviewSpec = config.reviewSpec ?? CONFIG.paths.reviewSpec;
+  const r3 = await stageReview(reviewSpec, reviewInput, formatReport, reviewedPath, config.reviewModel);
   if (!r3.success) { console.error(`Format review failed: ${r3.error}`); process.exit(1); }
 
   console.log("[4/4] Beautifying layout...");

@@ -1,13 +1,10 @@
-import type { SourceBlock } from "../types/source-block.js";
-
-/** Maximum characters before a TOC-like entry is considered "short" */
-const SHORT_LINE_MAX = 60;
+import type { SourceBlock } from "../types/document-ir.js";
 
 /** Detect if a block text looks like a table-of-contents entry (short lines with dots) */
-function isTocLike(text: string): boolean {
+function isTocLike(text: string, shortLineMax: number): boolean {
   const lines = text.split("\n").filter(l => l.trim().length > 0);
   if (lines.length < 2) return false;
-  return lines.every(l => l.trim().length < SHORT_LINE_MAX);
+  return lines.every(l => l.trim().length < shortLineMax);
 }
 
 /** Extract plain text from HTML, preserving meaningful line breaks */
@@ -88,12 +85,15 @@ export interface TocGroup {
   texts: string[];
 }
 
-export function groupTocBlocks(blocks: Pick<SourceBlock, "id" | "type" | "text">[]): TocGroup[] {
+export function groupTocBlocks(
+  blocks: Pick<SourceBlock, "id" | "type" | "text">[],
+  shortLineMax = 60,
+): TocGroup[] {
   const groups: TocGroup[] = [];
   let current: TocGroup | null = null;
 
   for (const b of blocks) {
-    if (b.type === "paragraph" && isTocLike(b.text)) {
+    if (b.type === "paragraph" && isTocLike(b.text, shortLineMax)) {
       if (!current) current = { ids: [], texts: [] };
       current.ids.push(b.id);
       current.texts.push(b.text);

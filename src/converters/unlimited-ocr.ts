@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadConfig } from "../utils/config.js";
 import type { Converter, ConvertOptions } from "./types.js";
 import { parseTableHtml } from "../utils/table-cells.js";
 import type {
@@ -49,16 +50,6 @@ function toWslPath(winPath: string): string {
     .replace(/^([A-Za-z]):\\/, (_m, d: string) => `/mnt/${d.toLowerCase()}/`)
     .replace(/\\/g, "/");
 }
-
-function envStr(name: string, fallback: string): string {
-  return process.env[name] ?? fallback;
-}
-
-const OCR_PYTHON = envStr("PTL_OCR_PYTHON", "/root/ptl-ocr-env/bin/python3");
-const OCR_MODEL_PATH = envStr(
-  "PTL_OCR_MODEL_PATH",
-  "/root/models/Unlimited-OCR/models/PaddlePaddle--Unlimited-OCR/snapshots/master",
-);
 
 function toGeometry(bbox: [number, number, number, number]): Geometry {
   const [x1, y1, x2, y2] = bbox;
@@ -139,18 +130,38 @@ export class UnlimitedOCRConverter implements Converter {
     const absInput = resolve(inputPath);
     const insideWsl = isRunningInWsl();
     const scriptPath = resolve("scripts/ocr/pdf_to_ir.py");
+    const cfg = loadConfig();
     const outputDir = options?.outputDir ?? "";
 
     const args = {
       pdf_path: insideWsl ? absInput : toWslPath(absInput),
       output_dir: insideWsl ? outputDir : toWslPath(outputDir),
       ...(options?.maxPages !== undefined ? { max_pages: options.maxPages } : {}),
+      page_width: cfg.page.width,
+      dpi: cfg.page.dpi,
+      model_size: cfg.page.modelSize,
+      ocr_output_dir: cfg.ocr.outputDir,
+      base_size: cfg.ocr.baseSize,
+      image_size: cfg.ocr.imageSize,
+      crop_mode: cfg.ocr.cropMode,
+      max_length: cfg.ocr.maxLength,
+      no_repeat_ngram_size: cfg.ocr.noRepeatNgramSize,
+      ngram_window: cfg.ocr.ngramWindow,
+      dedup_threshold: cfg.ocr.dedupThreshold,
+      font_overlap_ratio: cfg.ocr.fontOverlapRatio,
+      image_overlap_ratio: cfg.ocr.imageOverlapRatio,
+      vector_gap_min: cfg.ocr.vectorGapMin,
+      vector_gap_max_ratio: cfg.ocr.vectorGapMaxRatio,
+      table_overlap_ratio: cfg.ocr.tableOverlapRatio,
+      table_near_px: cfg.ocr.tableNearPx,
+      non_white_value: cfg.ocr.nonWhiteValue,
+      non_white_ratio: cfg.ocr.nonWhiteRatio,
     };
 
-    const python = insideWsl ? OCR_PYTHON : "wsl";
+    const python = insideWsl ? cfg.ocr.python : "wsl";
     const pythonArgs = insideWsl
-      ? [scriptPath, OCR_MODEL_PATH, JSON.stringify(args)]
-      : [OCR_PYTHON, scriptPath, OCR_MODEL_PATH, JSON.stringify(args)];
+      ? [scriptPath, cfg.ocr.modelPath, JSON.stringify(args)]
+      : [cfg.ocr.python, scriptPath, cfg.ocr.modelPath, JSON.stringify(args)];
 
     const result = await execa(python, pythonArgs, {
       timeout: 1_200_000,

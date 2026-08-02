@@ -2,11 +2,13 @@ import { readFile, copyFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { lintHtml } from "../utils/lint.js";
+import { loadConfig } from "../utils/config.js";
 import { execa } from "execa";
 import { parseHTML } from "linkedom";
 import type { StageResult } from "../types/pipeline.js";
 
-const WSL_PYTHON = "/root/ptl-ocr-env/bin/python3";
+const CONFIG = loadConfig();
+const WSL_PYTHON = CONFIG.ocr.python;
 
 const insideWsl = existsSync("/proc/sys/fs/binfmt_misc/WSLInterop");
 
@@ -19,17 +21,20 @@ function wslPath(winPath: string): string {
 /** Extract PDF text blocks with font info for layout comparison */
 async function extractPdfLayout(pdfPath: string): Promise<string> {
   const pdfAbs = resolve(pdfPath);
+  const dpi = CONFIG.page.dpi;
+  const pageW = CONFIG.page.width;
+  const modelSize = CONFIG.page.modelSize;
   const script = `
 import fitz, json, sys, os
 doc = fitz.open("${pdfAbs}")
 max_pages = len(doc)
-PDF_TO_PAGE = 300 / 72
-PAGE_W = 1024
-MODEL_SIZE = 1024
+PDF_TO_PAGE = ${dpi} / 72
+PAGE_W = ${pageW}
+MODEL_SIZE = ${modelSize}
 PDF_PT_W = doc[0].rect.width
 PDF_PT_H = doc[0].rect.height
-page_w = int(PDF_PT_W * 300 / 72)
-page_h = int(PDF_PT_H * 300 / 72)
+page_w = int(PDF_PT_W * PDF_TO_PAGE)
+page_h = int(PDF_PT_H * PDF_TO_PAGE)
 PAGE_H = int(PAGE_W * (page_h / page_w))
 
 results = []
@@ -153,7 +158,7 @@ function generateLayoutSummary(pdfJson: string, htmlJson: string): string {
     for (const he of htmlPage.elements) {
       const fromRight = 1024 - (he.x + he.w);
       const fromTop = he.y;
-      if (fromRight < 150 && fromRight > 0 && he.text.length > 2) {
+      if (fromRight < CONFIG.beautify.nearRightPx && fromRight > 0 && he.text.length > 2) {
         rightEdgeElements.push(`P${pdfPage.page} "${he.text.slice(0,25)}" right=${fromRight}px from edge, left=${he.x} w=${he.w}`);
       }
       if (fromTop < 30 && fromTop > 0 && he.text.length > 2) {
@@ -343,14 +348,14 @@ export async function stageBeautify(
       /(<div class="[^"]*near-right[^"]*)" style="([^"]*left:)(\d+)(px[^"]*")/g,
       (match, prefix, beforeLeft, leftStr, suffix) => {
         const left = parseInt(leftStr);
-        if (left >= 100) {           moved++;
-          return `${prefix}" style="${beforeLeft}${left - 16}${suffix}`; }
+        if (left >= CONFIG.beautify.rightAdjustMinLeft) {           moved++;
+          return `${prefix}" style="${beforeLeft}${left - CONFIG.beautify.rightAdjustPx}${suffix}`; }
         return match;
       }
     );
     if (moved > 0) {
       await writeFile(htmlPath, aft, "utf-8");
-      console.log(`  RightEdgeAdjust: moved ${moved} elements 16px left`);
+      console.log(`  RightEdgeAdjust: moved ${moved} elements ${CONFIG.beautify.rightAdjustPx}px left`);
     }
   }
 

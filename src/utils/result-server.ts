@@ -1,5 +1,5 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 import { execa } from "execa";
@@ -118,6 +118,24 @@ export function isHostLanCandidate(ip: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
 }
 
+/** Newest `ir-e2e-final-*` directory under workDir, or null. */
+export function pickLatestArchive(workDir: string): string | null {
+  try {
+    const dirs = readdirSync(workDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^ir-e2e-final-/.test(e.name))
+      .map((e) => join(workDir, e.name));
+    dirs.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+    return dirs[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function defaultResultRoot(): string {
+  const workDir = resolve(process.cwd(), "workdir");
+  return pickLatestArchive(workDir) ?? workDir;
+}
+
 /**
  * Best-effort Windows host LAN IP detection (WSL only). Returns [] when
  * interop is unavailable or the parse fails.
@@ -142,9 +160,7 @@ export async function detectWindowsLanIp(): Promise<string[]> {
 }
 
 export async function startResultServer(options: ResultServerOptions = {}) {
-  const root = resolve(
-    options.root ?? join(process.cwd(), "workdir", "ir-e2e-final-2026-08-01-v2"),
-  );
+  const root = resolve(options.root ?? defaultResultRoot());
   const port = options.port ?? 8080;
   const hostname = options.hostname ?? "0.0.0.0";
 

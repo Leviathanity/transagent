@@ -210,6 +210,21 @@ bun run bin/ptl.ts serve            # 或 bun run serve / npm run serve
 
 验证：服务器单测 4 项（索引、MIME、嵌套目录、404；沙箱禁止 listen 时自动 skip），实测 0.0.0.0:8080 索引与 2.85MB 最终 HTML 均 200；全量测试 **89 pass / 5 skip / 0 fail**，`tsc` 0 错误。
 
+## Phase 10 — 全仓审计整改：配置层 + 去硬编码/去耦合清理（2026-08-02）
+
+审计结论：分层架构健康（IR 契约/Converter 接缝/纯函数渲染器/通用提示词），但存在机器路径硬编码、与 test1 样本/归档名耦合、魔法阈值不可配等问题。本次整改：
+
+1. **统一配置层** `src/utils/config.ts`：优先级 CLI > env（`PTL_OCR_PYTHON`/`PTL_OCR_MODEL_PATH`/`PTL_PAGE_WIDTH`/`PTL_WORK_DIR`/`PTL_REVIEW_SPEC`/`PTL_*_MODEL` 等）> `ptl.config.json`（或 `PTL_CONFIG` 指定）> 内置默认；新增 `ptl.config.example.json`。
+   - OCR：python/model/outputDir、推理参数（imageSize/maxLength/ngramWindow 等）、启发式阈值（dedup/font/image overlap/vector gap/non-white）全部可配，`pdf_to_ir.py` 改为从 args 读取；
+   - 页面模型（width/dpi/modelSize）消除三重重复：converter 传参、beautify 内嵌脚本注入、渲染器隐式一致；
+   - 管线：`--review-spec`/`--work-dir`/模型 env 兜底（bin/ptl.ts、orchestrator）、TOC 短行阈值、lint `minOverlapY`、beautify 近边/右移阈值、result-server 默认根改为**自动选最新归档**。
+2. **方向检测修正**：`ptl translate` 不再读取 PDF 二进制前 500 字节（永远误判 en2zh），改为转换后基于 IR 文本自动检测；`--direction` 仍可显式指定。
+3. **清理与去耦合**：
+   - 根目录 10 个 test1 样本 HTML 归档至 `workdir/legacy-root-artifacts-2026-08-02/` 并从 git 移除；
+   - 删除旧类型 `types/source-block.ts`、未使用的 `source-block-splitter(.test).ts`、omp-session 死代码（旧 HTML 时代提示词）；splitter/translation-prompts 迁移到 `document-ir` 类型。
+
+测试：**94 pass / 0 fail**（新增 config 4 项、pickLatestArchive 1 项；移除旧 splitter 3 项），`tsc` 0 错误。已知保留：OCR/模型默认路径仍指向本机（可用 env/配置覆盖）、review 规范仍与像素渲染器绑定（语义渲染器需配套规范，后续可加）。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
