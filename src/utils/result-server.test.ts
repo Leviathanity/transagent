@@ -58,6 +58,17 @@ describe("pickLatestArchive", () => {
     expect(pickLatestArchive(dir)).toBe(fresh);
     expect(pickLatestArchive(join(dir, "missing"))).toBeNull();
   });
+
+  it("also matches ir-e2e-test2-* style archives", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "ptl-archive-"));
+    const old = join(dir, "ir-e2e-final-2026-08-01");
+    const fresh = join(dir, "ir-e2e-test2-2026-08-02");
+    await Bun.$`mkdir -p ${old} ${fresh}`.quiet();
+    const base = new Date("2026-08-02T00:00:00Z").getTime() / 1000;
+    await utimes(old, base, base);
+    await utimes(fresh, base + 100, base + 100);
+    expect(pickLatestArchive(dir)).toBe(fresh);
+  });
 });
 
 describe.skipIf(!canListen)("startResultServer", () => {

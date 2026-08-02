@@ -118,11 +118,11 @@ export function isHostLanCandidate(ip: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(ip);
 }
 
-/** Newest `ir-e2e-final-*` directory under workDir, or null. */
+/** Newest `ir-e2e-*` result archive under workDir, or null. */
 export function pickLatestArchive(workDir: string): string | null {
   try {
     const dirs = readdirSync(workDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory() && /^ir-e2e-final-/.test(e.name))
+      .filter((e) => e.isDirectory() && /^ir-e2e-/.test(e.name))
       .map((e) => join(workDir, e.name));
     dirs.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     return dirs[0] ?? null;
