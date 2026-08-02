@@ -245,7 +245,7 @@ bun run bin/ptl.ts serve            # 或 bun run serve / npm run serve
 3. 新暴露问题二：页 3/4 右侧 170x30pt 装饰条压在表格空白单元格上（PDF 该区域无文本）→ 292px 为盒模型误报；lint 无"图片压空白区"判定。
 4. review 修复效率高（23 turns vs test1 的 196 turns），结构性修复（并排表格 max-width）有效。
 
-产物归档：`workdir/ir-e2e-test2-2026-08-02/`（IR/译文/review/beautify/interact + 报告 + README，HTML 均为自包含内嵌版）。
+产物归档：`workdir/ir-e2e-test2-2026-08-02/`（原始英文 HTML、IR、译文、review/beautify/interact + 报告 + README，HTML 均为自包含内嵌版）。
 
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
