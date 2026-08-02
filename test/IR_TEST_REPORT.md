@@ -225,6 +225,28 @@ bun run bin/ptl.ts serve            # 或 bun run serve / npm run serve
 
 测试：**94 pass / 0 fail**（新增 config 4 项、pickLatestArchive 1 项；移除旧 splitter 3 项），`tsc` 0 错误。已知保留：OCR/模型默认路径仍指向本机（可用 env/配置覆盖）、review 规范仍与像素渲染器绑定（语义渲染器需配套规范，后续可加）。
 
+## Phase 11 — test2.pdf 泛化性分阶段测试（2026-08-02）
+
+**目的**：用完全不同类型的文档（IMDS MDS 材料数据报告，4 页 A4、Helvetica、密集表格 + 141 个小图标）验证框架通用性。
+
+| 阶段 | 结果 |
+|---|---|
+| Phase 1 单元/回归 | 94 pass / 0 fail |
+| Phase 3a 真实 OCR | 4 页 / 202 块（other 36 / heading 7 / paragraph 12 / table 6 / image 141）；6 表列数全部一致；lint 59（45 项 image-content 为小图标噪声） |
+| Phase 3b 翻译 | 61 块可译 / 0 TOC 误分组；页眉、日期、专业术语翻译正确；CAS 号（1333-86-4 等）与 EPDM 等原文保留 |
+| review | 60 项（55 lint + 5 grill），23 assistant turns 全修（含第 1 页并排表格 max-width 修复）；lint 55 → 3 |
+| beautify | 13 near-right + 251 行 CSS；浏览器实测：页 1 最大重叠 2px、页 2 最大 7px、页 3/4 单对 292px |
+| interact | 全确认/skip round-trip 通过 |
+| 最终文件 | lint 3（盒模型误报）、0 det、6 表完整、163 图内嵌、自包含（125KB） |
+
+**分析结论**：
+1. 核心链路（OCR→IR→翻译→review→beautify）对完全不同的文档类型泛化良好；表格一致性、术语保留、TOC 判定均正常。
+2. 新暴露问题一：行内 17x17 小图标被拆成 141 个 image 块（test1 仅 35 个）→ lint 45 项 image-content 误报、review 成本上升；建议 OCR 后过滤/合并 30px 以下图标。
+3. 新暴露问题二：页 3/4 右侧 170x30pt 装饰条压在表格空白单元格上（PDF 该区域无文本）→ 292px 为盒模型误报；lint 无"图片压空白区"判定。
+4. review 修复效率高（23 turns vs test1 的 196 turns），结构性修复（并排表格 max-width）有效。
+
+产物归档：`workdir/ir-e2e-test2-2026-08-02/`（IR/译文/review/beautify/interact + 报告 + README，HTML 均为自包含内嵌版）。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
