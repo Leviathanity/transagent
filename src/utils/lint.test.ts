@@ -61,4 +61,15 @@ describe("lintHtml", () => {
     expect(issues.filter((i) => i.subType === "overflow")).toEqual([]);
     expect(issues.some((i) => i.subType === "table-content")).toBe(false);
   });
+
+  it("counts colspan cells in the table column structure check", () => {
+    const html = `<div class="page" style="position:relative;width:1024px;height:1449px;">
+<div class="det-table" style="position:absolute;left:80px;top:100px;width:500px;"><table><tbody>
+<tr><td colspan="2">A</td><td>B</td></tr>
+<tr><td>X</td><td>Y</td><td>Z</td></tr>
+</tbody></table></div>
+</div>`;
+    const issues = lintHtml(html);
+    expect(issues.filter((i) => i.subType === "table-column-mismatch")).toEqual([]);
+  });
 });

@@ -37,6 +37,36 @@ export interface CellImageRef {
   col?: number;
 }
 
+/** One mapped text slot inside a grid-driven table cell. */
+export interface GridLayoutCellItem {
+  /** Index into `[...headerRows, ...rows]` of the semantic table. */
+  srcRow: number;
+  /** Column index inside that semantic row. */
+  srcCol: number;
+}
+
+/** A non-empty grid cell: texts mapped from OCR rows + column span. */
+export interface GridLayoutCell {
+  items: GridLayoutCellItem[];
+  /** Number of grid columns this cell covers. */
+  colspan: number;
+}
+
+/**
+ * Code-path grid layout for a table: row/column boundaries in display px and
+ * the mapping from semantic OCR rows/cells into grid cells. Rendering with
+ * this layout makes the reconstructed table box equal the PDF grid box, so
+ * backfilled icons (cellImages row/col) land inside the correct cells.
+ */
+export interface GridLayout {
+  /** Grid row boundaries (display px, length = rows + 1). */
+  rows: number[];
+  /** Grid column boundaries (display px, length = cols + 1). */
+  cols: number[];
+  /** rows × cols matrix; null = empty cell. */
+  cells: (GridLayoutCell | null)[][];
+}
+
 interface BaseSourceBlock {
   id: string;
   type: SourceBlockType;
@@ -65,6 +95,12 @@ export interface TableSourceBlock extends BaseSourceBlock {
    * and the OCR text sits at a sub-region of that grid.
    */
   contentOffset?: { left: number; top: number };
+  /**
+   * Grid-driven layout: PDF grid box + OCR text mapping. Rendering with this
+   * layout makes the reconstructed table box equal the PDF grid box, so
+   * backfilled icons land inside the correct cells.
+   */
+  gridLayout?: GridLayout;
 }
 
 export interface ImageSourceBlock extends BaseSourceBlock {

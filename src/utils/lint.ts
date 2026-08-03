@@ -184,6 +184,15 @@ export function lintHtml(
         const xOverlap = a.left < b.right && a.right > b.left;
         const yOverlap = a.top < b.bottom && a.bottom > b.top;
         if (xOverlap && yOverlap) {
+          // Grid-driven tables span the full PDF frame; page furniture
+          // (header/footer/page number) legitimately floats inside the frame
+          // top in IMDS-style layouts. That is not a content collision.
+          const isTable = a.etype === "table" || b.etype === "table";
+          const isFurniture =
+            a.etype === "header" || b.etype === "header" ||
+            a.etype === "footer" || b.etype === "footer" ||
+            a.etype === "page_number" || b.etype === "page_number";
+          if (isTable && isFurniture) continue;
           const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
           if (overlapY > minOverlapY) {
             const st = overlapType(a.etype, b.etype);
@@ -213,7 +222,11 @@ export function lintHtml(
     // (and their borders) are silently missing.
     for (const table of page.querySelectorAll(".det-table table")) {
       const colCounts = [...table.querySelectorAll("tr")].map(
-        (tr) => tr.querySelectorAll("td,th").length,
+        (tr) =>
+          [...tr.querySelectorAll("td,th")].reduce(
+            (n, c) => n + parseInt(c.getAttribute("colspan") || "1", 10),
+            0,
+          ),
       );
       const max = Math.max(0, ...colCounts);
       colCounts.forEach((count, ri) => {

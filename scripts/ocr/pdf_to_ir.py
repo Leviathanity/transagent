@@ -205,6 +205,176 @@ def cell_at(g, cx, cy, tol):
     return None
 
 
+def ocr_html_rows(html):
+    """Split an OCR table HTML string into rows of cell texts."""
+    rows = re.findall(r"<tr[^>]*>(.*?)</tr>", html or "", re.S | re.I)
+    out = []
+    for r in rows:
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", r, re.S | re.I)
+        texts = []
+        for c in cells:
+            t = re.sub(r"<[^>]+>", "", c)
+            t = t.replace("&nbsp;", " ").strip()
+            texts.append(t)
+        out.append({"html": r, "texts": texts})
+    return out
+
+
+def norm_text(t):
+    return re.sub(r"[\s\u00a0\u200b]+", "", t).lower()
+
+
+def merge_spans(spans):
+    x1 = min(s["bbox"][0] for s in spans)
+    y1 = min(s["bbox"][1] for s in spans)
+    x2 = max(s["bbox"][2] for s in spans)
+    y2 = max(s["bbox"][3] for s in spans)
+    return {"bbox": (x1, y1, x2, y2), "text": " ".join(s["text"] for s in spans)}
+
+
+def find_cell_candidates(t, spans, ybox=None):
+    """Candidate PDF spans for one OCR cell text (model space).
+
+    Exact (normalized) matches win and are returned one-by-one for the caller
+    to disambiguate; without an exact match, vertically overlapping spans the
+    text contains are merged into a single candidate bbox. Never merge spans
+    across unrelated rows (a short substring exists all over the page).
+    """
+    nt = norm_text(t)
+    if not nt:
+        return []
+    exact = []
+    contained = []
+    for s in spans:
+        st = norm_text(s["text"])
+        if not st:
+            continue
+        sy = (s["bbox"][1] + s["bbox"][3]) / 2
+        if ybox is not None and not (ybox[0] <= sy <= ybox[1]):
+            continue
+        if st == nt:
+            exact.append(s)
+        elif len(nt) >= 3 and len(st) >= 2 and (nt in st or st in nt):
+            contained.append(s)
+    if exact:
+        return exact
+    if contained:
+        base = max(contained, key=lambda s: s["bbox"][3] - s["bbox"][1])
+        by1, by2 = base["bbox"][1], base["bbox"][3]
+        close = [
+            s for s in contained
+            if not (s["bbox"][3] < by1 - 5 or s["bbox"][1] > by2 + 5)
+        ]
+        return [merge_spans(close)]
+    return []
+
+
+def ir_row_index(html_rows):
+    """Replicate parseTableHtml row ordering: th rows first, then td rows."""
+    headers = [i for i, r in enumerate(html_rows) if "<th" in r["html"].lower()]
+    bodies = [i for i, r in enumerate(html_rows) if "<th" not in r["html"].lower()]
+    idx = {}
+    for pos, orig in enumerate(headers):
+        idx[orig] = pos
+    for pos, orig in enumerate(bodies):
+        idx[orig] = len(headers) + pos
+    return idx
+
+
+def build_grid_layout(tb, grid, spans):
+    """Map OCR semantic rows/cells into the code-path grid.
+
+    Every OCR cell text is located in the PDF text spans and mapped to a grid
+    row/column (with colspan for cells spanning several grid columns). The
+    result references semantic rows by their IR index (srcRow/srcCol), so
+    translation of headerRows/rows automatically flows into the grid table.
+    Cells whose text cannot be located (OCR hallucination / text outside the
+    grid, e.g. page-1 left-column paragraphs merged into the table) are
+    dropped — their real content already lives in page text blocks.
+    """
+    rows = grid["rows"]
+    cols = grid["cols"]
+    n = len(rows) - 1
+    m = len(cols) - 1
+    cells = [[None] * m for _ in range(n)]
+    html_rows = ocr_html_rows(tb.get("content", ""))
+    row_idx = ir_row_index(html_rows)
+    ybox = (tb["bbox"][1] - 10, tb["bbox"][3] + 10) if tb.get("bbox") else None
+    for ri, r in enumerate(html_rows):
+        # OCR semantic rows are NOT physical rows (IMDS headers are spread
+        # across the page), so match each cell independently. Distinct texts
+        # anchor the row first; short numbers pick the candidate nearest to
+        # those anchors instead of matching the same number elsewhere.
+        matched = {}
+        refs = []
+        for ci, t in enumerate(r["texts"]):
+            if not t:
+                continue
+            cands = find_cell_candidates(t, spans, ybox=ybox)
+            if not cands:
+                continue
+            if len(t) >= 4 or re.search(r"[A-Za-z]", t):
+                if len(cands) > 1 and refs:
+                    cy = [(c["bbox"][1] + c["bbox"][3]) / 2 for c in cands]
+                    best = min(
+                        range(len(cands)),
+                        key=lambda i: min(abs(cy[i] - y) for y in refs),
+                    )
+                    cands = [cands[best]]
+                matched[ci] = cands[0]
+                refs.append((cands[0]["bbox"][1] + cands[0]["bbox"][3]) / 2)
+        for ci, t in enumerate(r["texts"]):
+            if ci in matched or not t:
+                continue
+            cands = find_cell_candidates(t, spans, ybox=ybox)
+            if not cands:
+                continue
+            if len(cands) > 1 and refs:
+                cy = [(c["bbox"][1] + c["bbox"][3]) / 2 for c in cands]
+                best = min(
+                    range(len(cands)),
+                    key=lambda i: min(abs(cy[i] - y) for y in refs),
+                )
+                cands = [cands[best]]
+            if cands:
+                matched[ci] = cands[0]
+        for ci, s in matched.items():
+            t = r["texts"][ci]
+            bx1, by1, bx2, by2 = s["bbox"]
+            cy = (by1 + by2) / 2
+            gr = None
+            for i in range(n):
+                if rows[i] - 1 <= cy <= rows[i + 1] + 1:
+                    gr = i
+                    break
+            if gr is None:
+                continue
+            c1 = c2 = None
+            for j in range(m):
+                if cols[j] - 1 <= bx1 <= cols[j + 1] + 1:
+                    c1 = j
+                if cols[j] - 1 <= bx2 <= cols[j + 1] + 1:
+                    c2 = j
+            if c1 is None or c2 is None:
+                continue
+            if c2 < c1:
+                c1, c2 = c2, c1
+            colspan = c2 - c1 + 1
+            src = row_idx.get(ri)
+            if src is None:
+                continue
+            if cells[gr][c1] is None:
+                cells[gr][c1] = {"items": [], "colspan": colspan}
+            entry = cells[gr][c1]
+            entry["items"].append({"srcRow": src, "srcCol": ci})
+            entry["colspan"] = max(entry["colspan"], colspan)
+    return {
+        "rows": [round(scale_h(v), 1) for v in rows],
+        "cols": [round(scale_w(v), 1) for v in cols],
+        "cells": cells,
+    }
+
+
 if args.get("grids_only"):
     out_pages = []
     for pi in range(max_pages):
@@ -703,6 +873,15 @@ for pi, page_blocks in enumerate(pages):
             })
     for ti, tb in enumerate(tables):
         tb["table_images"] = table_imgs[ti]
+        gi = table_grid[ti] if ti < len(table_grid) else None
+        if gi is None:
+            for gk, tv in grid_only_ti.items():
+                if tv == ti:
+                    gi = gk
+                    break
+        if gi is not None:
+            spans = page_fonts[pi] if pi < len(page_fonts) else []
+            tb["grid_layout"] = build_grid_layout(tb, grids[gi], spans)
     pages[pi] = page_blocks + added
 
 
@@ -857,6 +1036,8 @@ for pi, page_blocks in enumerate(pages):
             entry["html"] = b["content"]
             if b.get("content_offset"):
                 entry["content_offset"] = b["content_offset"]
+            if b.get("grid_layout"):
+                entry["grid_layout"] = b["grid_layout"]
             if b.get("table_images"):
                 entry["table_images"] = b["table_images"]
         else:

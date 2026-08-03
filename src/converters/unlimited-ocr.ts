@@ -26,6 +26,11 @@ export interface OcrBlockPayload {
   font?: FontStyle;
   table_images?: CellImageRef[];
   content_offset?: { left: number; top: number };
+  grid_layout?: {
+    rows: number[];
+    cols: number[];
+    cells: ({ items: { srcRow: number; srcCol: number }[]; colspan: number } | null)[][];
+  };
   identity?: { xref?: number; hash?: string; sourceName?: string };
   kind?: "content" | "icon" | "decor" | "vector";
   placements?: { page: number; x: number; y: number; width: number; height: number }[];
@@ -101,6 +106,7 @@ export function normalizeOcrPayload(payload: OcrPayload): DocumentIR {
             rows: cells.rows,
             ...(raw.table_images ? { cellImages: raw.table_images } : {}),
             ...(raw.content_offset ? { contentOffset: raw.content_offset } : {}),
+            ...(raw.grid_layout ? { gridLayout: raw.grid_layout } : {}),
           };
         }
         if (type === "image") {

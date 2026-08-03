@@ -223,6 +223,80 @@ describe("renderPixelPerfectHtml", () => {
     expect(out).toContain("position:absolute;left:3px;top:194px");
   });
 
+  it("renders grid-driven tables with fixed grid geometry and in-cell icons", () => {
+    const ir2: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1449,
+          blocks: [
+            {
+              id: "t1",
+              type: "table",
+              level: 0,
+              text: "",
+              headerRows: [],
+              rows: [["Tree Level", "Description"], ["1", "Seal"]],
+              gridLayout: {
+                rows: [48, 264, 1353],
+                cols: [635, 719, 883],
+                cells: [
+                  [{ items: [{ srcRow: 0, srcCol: 0 }], colspan: 1 }, { items: [{ srcRow: 0, srcCol: 1 }], colspan: 1 }],
+                  [{ items: [{ srcRow: 1, srcCol: 0 }], colspan: 1 }, { items: [{ srcRow: 1, srcCol: 1 }], colspan: 1 }],
+                ],
+              },
+              cellImages: [
+                { src: "icon.png", left: 3, top: 1204, width: 17, height: 17, row: 1, col: 0 },
+              ],
+              geometry: { x: 635, y: 48, width: 248, height: 1305 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(ir2);
+    expect(out).toContain('table-layout:fixed;width:248px');
+    expect(out).toContain('<col style="width:84px">');
+    expect(out).toContain('<tr style="height:216px;">');
+    expect(out).toContain('<tr style="height:1089px;">');
+    expect(out).toContain("Tree Level");
+    expect(out).toContain("Seal");
+    // icon is relative to the grid origin; inside td (row1, col0) the offset
+    // is (3 - 0, 1204 - 216) = (3, 988), minus the 1px collapsed border.
+    expect(out).toContain('position:absolute;left:2px;top:987px');
+  });
+
+  it("renders grid tables with colspan cells and consistent columns", () => {
+    const ir2: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1449,
+          blocks: [
+            {
+              id: "t1",
+              type: "table",
+              level: 0,
+              text: "",
+              headerRows: [["Title spanning"]],
+              rows: [],
+              gridLayout: {
+                rows: [48, 200],
+                cols: [635, 719, 883],
+                cells: [[{ items: [{ srcRow: 0, srcCol: 0 }], colspan: 2 }, null]],
+              },
+              geometry: { x: 635, y: 48, width: 248, height: 152 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(ir2);
+    expect(out).toContain('<td colspan="2"');
+    // one td with colspan=2 covers both grid columns
+    expect(out.match(/<td/g)?.length).toBe(1);
+  });
+
   it("right-aligns page numbers", () => {
     expect(html).toContain("text-align:right;");
   });

@@ -1,4 +1,5 @@
 import type {
+  CellImageRef,
   DocumentIR,
   Page,
   SourceBlock,
@@ -18,6 +19,95 @@ function fontStyleCss(b: SourceBlock): string {
   css += `font-style:${f?.italic ? "italic" : "normal"};`;
   if (f?.color) css += `color:${f.color};`;
   return css;
+}
+
+/**
+ * Grid-driven table: the reconstructed HTML table box equals the PDF grid
+ * box. OCR semantic texts are placed into grid cells via gridLayout, and
+ * backfilled icons render INSIDE their owning <td> (so review/beautify style
+ * changes can no longer separate icons from their table).
+ */
+function renderGridTable(t: TableSourceBlock): string {
+  const gl = t.gridLayout!;
+  const ox = gl.cols[0];
+  const oy = gl.rows[0];
+  const W = gl.cols[gl.cols.length - 1] - ox;
+  const H = gl.rows[gl.rows.length - 1] - oy;
+  const allRows = [...t.headerRows, ...t.rows];
+  const colgroup = gl.cols
+    .slice(0, -1)
+    .map((x, i) => `<col style="width:${Math.round(gl.cols[i + 1] - x)}px">`)
+    .join("");
+
+  const imagesByCell = new Map<string, CellImageRef[]>();
+  for (const im of t.cellImages ?? []) {
+    if (im.row === undefined || im.col === undefined) continue;
+    const key = `${im.row}:${im.col}`;
+    const arr = imagesByCell.get(key) ?? [];
+    arr.push(im);
+    imagesByCell.set(key, arr);
+  }
+
+  const body = gl.cells
+    .map((rowCells, r) => {
+      const rowH = gl.rows[r + 1] - gl.rows[r];
+      const rowTop = gl.rows[r] - oy;
+      const imgsIn = (cc: number): CellImageRef[] =>
+        imagesByCell.get(`${r}:${cc}`) ?? [];
+      const imgHtml = (imgs: CellImageRef[], colLeft: number): string =>
+        imgs
+          .map(
+            (im) =>
+              // Absolute positioning is relative to the td padding box, which
+              // starts 1px inside the collapsed border; subtract it so the
+              // icon lands on the exact grid coordinates.
+              `<img src="${escapeHtml(im.src)}" alt="" style="position:absolute;left:${Math.round(im.left - colLeft - 1)}px;top:${Math.round(im.top - rowTop - 1)}px;max-width:${Math.round(im.width)}px;height:auto;z-index:3;pointer-events:none;">`,
+          )
+          .join("");
+      let tds = "";
+      let c = 0;
+      while (c < rowCells.length) {
+        const cell = rowCells[c];
+        const colLeft = gl.cols[c] - ox;
+        if (!cell) {
+          const imgs = imgsIn(c);
+          tds += `<td style="box-sizing:border-box;position:relative;width:${Math.round(gl.cols[c + 1] - gl.cols[c])}px;height:${Math.round(rowH)}px;">${imgHtml(imgs, colLeft)}</td>`;
+          c++;
+          continue;
+        }
+        const colspan = Math.max(1, Math.min(cell.colspan, rowCells.length - c));
+        const colW = gl.cols[Math.min(c + colspan, gl.cols.length - 1)] - gl.cols[c];
+        // A cell with colspan covers several grid columns; collect every icon
+        // whose column lies inside the covered range.
+        const imgs: CellImageRef[] = [];
+        for (let cc = c; cc < Math.min(c + colspan, rowCells.length); cc++) {
+          imgs.push(...imgsIn(cc));
+        }
+        const texts = cell.items
+          .map((it) => allRows[it.srcRow]?.[it.srcCol] ?? "")
+          .filter((tx) => tx.length > 0);
+        // The text wrapper is absolutely positioned so it never contributes to
+        // the row height: rows stay exactly at their grid boundary height even
+        // when a narrow cell forces the text to wrap many lines. The wrapper
+        // uses a CSS class (not inline position:absolute) so review/beautify
+        // structural repair — which flattens nested inline-absolute divs —
+        // cannot move or unwrap it.
+        const textHtml = texts.length
+          ? `<div class="det-cell-text">${texts
+              .map(
+                (tx) =>
+                  `<div style="font-size:12px;line-height:1.35;overflow-wrap:break-word;">${escapeHtml(tx)}</div>`,
+              )
+              .join("")}</div>`
+          : "";
+        tds += `<td${colspan > 1 ? ` colspan="${colspan}"` : ""} style="box-sizing:border-box;position:relative;width:${Math.round(colW)}px;height:${Math.round(rowH)}px;padding:2px 4px;overflow:hidden;">${textHtml}${imgHtml(imgs, colLeft)}</td>`;
+        c += colspan;
+      }
+      return `<tr style="height:${Math.round(rowH)}px;">${tds}</tr>`;
+    })
+    .join("");
+
+  return `<table style="table-layout:fixed;width:${Math.round(W)}px;border-collapse:collapse;">${colgroup}<tbody>${body}</tbody></table>`;
 }
 
 function tableInnerHtml(t: TableSourceBlock, height: number): string {
@@ -79,6 +169,12 @@ function renderBlock(b: SourceBlock): string {
   if (!g) return "";
 
   if (b.type === "table") {
+    if (b.gridLayout) {
+      const W = b.gridLayout.cols[b.gridLayout.cols.length - 1] - b.gridLayout.cols[0];
+      const H = b.gridLayout.rows[b.gridLayout.rows.length - 1] - b.gridLayout.rows[0];
+      const sty = `position:absolute;left:${g.x}px;top:${g.y}px;width:${Math.round(W)}px;height:${Math.round(H)}px;z-index:1;`;
+      return `<div class="det-table" style="${sty}">${renderGridTable(b)}</div>`;
+    }
     const sty = `position:absolute;left:${g.x}px;top:${g.y}px;z-index:1;`;
     return `<div class="det-table" style="${sty}">${tableInnerHtml(b, g.height)}</div>`;
   }
@@ -130,6 +226,7 @@ body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
 .det-table table{border-collapse:collapse;width:auto;table-layout:fixed;word-wrap:break-word;}
 .det-table td,.det-table th{border:1px solid #888;padding:3px 6px;font-size:12px;overflow-wrap:break-word;}
 .det-table th{background:#e8e8e8;font-weight:bold;}
+.det-table td .det-cell-text{position:absolute;left:4px;top:2px;right:4px;pointer-events:none;}
 .det-image img{max-width:100%;height:auto;object-fit:contain;}
 </style>`;
 

@@ -142,4 +142,40 @@ describe("normalizeOcrPayload", () => {
     expect(table.contentOffset).toEqual({ left: -571, top: 827 });
     expect(table.cellImages?.[0]).toMatchObject({ src: "icon.png", row: 1, col: 0 });
   });
+
+  it("passes gridLayout into the IR", () => {
+    const ir = normalizeOcrPayload({
+      pages: [
+        {
+          width: 1024,
+          height: 1449,
+          blocks: [
+            {
+              type: "table",
+              bbox: [635, 48, 883, 1353],
+              html: "<table><tr><td>A</td></tr></table>",
+              grid_layout: {
+                rows: [48, 264, 1353],
+                cols: [635, 719, 883],
+                cells: [
+                  [{ items: [{ srcRow: 0, srcCol: 0 }], colspan: 2 }, null],
+                  [null, null],
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const table = ir.pages[0].blocks[0];
+    if (table.type !== "table") throw new Error("expected table");
+    expect(table.gridLayout).toEqual({
+      rows: [48, 264, 1353],
+      cols: [635, 719, 883],
+      cells: [
+        [{ items: [{ srcRow: 0, srcCol: 0 }], colspan: 2 }, null],
+        [null, null],
+      ],
+    });
+  });
 });
