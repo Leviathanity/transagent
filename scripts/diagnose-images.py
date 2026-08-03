@@ -25,6 +25,7 @@ def main():
 
     placements = 0
     unique = {}
+    placements_by_key = {}
     per_page = []
     for i in range(len(doc)):
         infos = doc[i].get_image_info(xrefs=True, hashes=True)
@@ -36,6 +37,19 @@ def main():
             key = f"x{xref}" if xref is not None else (h.hex()[:16] if h else f"p{i}_n{info['number']}")
             unique.setdefault(key, 0)
             unique[key] += 1
+            placements_by_key.setdefault(key, []).append((i, info["bbox"]))
+
+    # icon placements (same rule as extraction: max dim < 40px, repeat >= 3)
+    icon_placements = 0
+    scale_y = 1024 / doc[0].rect.height
+    for key, pls in placements_by_key.items():
+        if len(pls) < 3:
+            continue
+        for _, bb in pls:
+            w = (bb[2] - bb[0]) * scale
+            hh = (bb[3] - bb[1]) * scale_y
+            if max(w, hh) < 40:
+                icon_placements += 1
 
     files = []
     if os.path.isdir(image_dir):
@@ -51,10 +65,13 @@ def main():
     ir = json.load(open(ir_path, encoding="utf-8"))
     blocks = []
     cell_images = 0
+    icon_blocks = 0
     for page in ir.get("pages", []):
         for b in page.get("blocks", []):
             if b.get("type") == "image":
                 blocks.append(b)
+                if b.get("kind") == "icon":
+                    icon_blocks += 1
             elif b.get("type") == "table":
                 cell_images += len(b.get("cellImages", []))
 
@@ -100,6 +117,11 @@ def main():
             "emptySrc": empty_src,
             "kinds": kinds,
             "cellImages": cell_images,
+        },
+        "backfill": {
+            "iconPlacements": icon_placements,
+            "backfilled": icon_blocks + cell_images,
+            "coverage": round((icon_blocks + cell_images) / max(icon_placements, 1), 3),
         },
         "geometryDeviationPx": {
             "n": len(deviations),

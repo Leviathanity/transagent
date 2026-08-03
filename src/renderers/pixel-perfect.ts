@@ -39,22 +39,16 @@ function tableInnerHtml(t: TableSourceBlock, height: number): string {
 
   const images = t.cellImages ?? [];
   if (images.length > 0) {
-    const rowCount = t.headerRows.length + t.rows.length;
-    const estRowH = rowCount > 0 ? height / rowCount : 50;
-    for (const img of [...images].sort((a, b) => a.top - b.top)) {
-      const rowIdx = Math.max(0, Math.min(Math.floor(img.top / estRowH), rowCount - 1));
-      const trs = inner.split("<tr>");
-      if (rowIdx + 1 < trs.length) {
-        const rowHtml = trs[rowIdx + 1];
-        const lastTdOpen = rowHtml.lastIndexOf("<td>");
-        const lastTdClose = rowHtml.lastIndexOf("</td>");
-        if (lastTdOpen >= 0 && lastTdClose > lastTdOpen) {
-          const imgTag = `<img src="${escapeHtml(img.src)}" style="max-width:${Math.round(img.width)}px;height:auto;display:block;">`;
-          trs[rowIdx + 1] = rowHtml.slice(0, lastTdOpen + 4) + imgTag + rowHtml.slice(lastTdClose);
-          inner = trs.join("<tr>");
-        }
-      }
-    }
+    // Backfill cell images at their exact PDF-relative offsets instead of
+    // guessing rows/columns: the overlay keeps icons in place even when the
+    // OCR table bbox or row heights are imperfect.
+    const overlay = images
+      .map(
+        (img) =>
+          `<img src="${escapeHtml(img.src)}" style="position:absolute;left:${Math.round(img.left)}px;top:${Math.round(img.top)}px;max-width:${Math.round(img.width)}px;height:auto;display:block;z-index:3;pointer-events:none;">`,
+      )
+      .join("");
+    inner = `${inner}<div class="det-table-imgs" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;">${overlay}</div>`;
   }
   return inner;
 }
@@ -80,9 +74,10 @@ function renderBlock(b: SourceBlock): string {
   }
 
   if (b.type === "image") {
-    // Icons/decorations live inside table cells or are skipped entirely;
-    // only content-like images become standalone elements.
-    if (b.kind === "icon" || b.kind === "decor") return "";
+    // Decorations are skipped entirely; icons outside tables stay as small
+    // standalone elements at their exact positions (icons inside tables are
+    // rendered through cellImages).
+    if (b.kind === "decor") return "";
     const sty = `position:absolute;left:${g.x}px;top:${g.y}px;width:${g.width}px;height:${g.height}px;z-index:2;`;
     const alt = b.alt.replace(/"/g, "&quot;");
     const kindAttr = b.kind ? ` data-kind="${b.kind}"` : "";

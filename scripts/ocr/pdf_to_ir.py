@@ -289,16 +289,20 @@ vector_non_white_ratio = args.get("vector_non_white_ratio", 0.03)
 table_image_overlap_ratio = args.get("table_image_overlap_ratio", 0.5)
 
 
-def scale_len(v):
+def scale_w(v):
     return v / MODEL_SIZE * PAGE_W
+
+
+def scale_h(v):
+    return v / MODEL_SIZE * PAGE_H
 
 
 def placement_kind(pl_bbox, count):
     """Classify one image placement (decor/icon rules use per-placement
     geometry; icon repeat count uses the resource-level placement count)."""
-    w_px = scale_len(pl_bbox[2] - pl_bbox[0])
-    h_px = scale_len(pl_bbox[3] - pl_bbox[1])
-    x_center_ratio = scale_len((pl_bbox[0] + pl_bbox[2]) / 2) / PAGE_W
+    w_px = scale_w(pl_bbox[2] - pl_bbox[0])
+    h_px = scale_h(pl_bbox[3] - pl_bbox[1])
+    x_center_ratio = scale_w((pl_bbox[0] + pl_bbox[2]) / 2) / PAGE_W
     aspect = max(w_px, h_px) / max(min(w_px, h_px), 1)
     if aspect >= decor_aspect_ratio and (
         min(w_px, h_px) < decor_min_dim
@@ -331,10 +335,10 @@ def display_placement(pl):
     b = pl["bbox"]
     return {
         "page": pl["page"],
-        "x": round(scale_len(b[0]), 1),
-        "y": round(scale_len(b[1]), 1),
-        "width": round(scale_len(b[2] - b[0]), 1),
-        "height": round(scale_len(b[3] - b[1]), 1),
+        "x": round(scale_w(b[0]), 1),
+        "y": round(scale_h(b[1]), 1),
+        "width": round(scale_w(b[2] - b[0]), 1),
+        "height": round(scale_h(b[3] - b[1]), 1),
     }
 
 
@@ -356,10 +360,19 @@ for pi, page_blocks in enumerate(pages):
             if kind == "decor":
                 continue
             if kind == "icon":
+                # Code-path membership: icon CENTER inside a table bbox
+                # (with a tolerance band) attaches it to that table; anything
+                # else stays a standalone icon block at its exact position.
+                cx = (ibb[0] + ibb[2]) / 2
+                cy = (ibb[1] + ibb[3]) / 2
+                tol_x = tol_y = 80.0 / 1024.0 * MODEL_SIZE
+                attached = False
                 for ti, tb in enumerate(tables):
                     tbb = tb["bbox"]
-                    ov = bbox_overlap(tbb, ibb)
-                    if ov / ia > table_image_overlap_ratio:
+                    if (
+                        tbb[0] - tol_x <= cx <= tbb[2] + tol_x
+                        and tbb[1] - tol_y <= cy <= tbb[3] + tol_y
+                    ):
                         table_imgs[ti].append({
                             "src": res["file_name"],
                             "left": round((ibb[0] - tbb[0]) / MODEL_SIZE * PAGE_W, 1),
@@ -367,6 +380,25 @@ for pi, page_blocks in enumerate(pages):
                             "width": round((ibb[2] - ibb[0]) / MODEL_SIZE * PAGE_W, 1),
                             "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * PAGE_H, 1),
                         })
+                        attached = True
+                        break
+                if attached:
+                    continue
+                added.append({
+                    "type": "image",
+                    "bbox": ibb,
+                    "content": "",
+                    "src": res["file_name"],
+                    "img_bbox": ibb,
+                    "identity": {
+                        "xref": res["xref"],
+                        "hash": res["hash"],
+                        "sourceName": res["file_name"],
+                    },
+                    "kind": "icon",
+                    "placements": [display_placement(p) for p in res["placements"]],
+                    "alt": "",
+                })
                 continue
             # content: inside a table -> cellImage, otherwise standalone block
             in_table = False
@@ -419,8 +451,8 @@ for pi, page_blocks in enumerate(pages):
         r = d.get("rect")
         if not r or d.get("type") not in ("f", "fs"):
             continue
-        aw = scale_len((r[2] - r[0]) * PDF_TO_PAGE / (page_w / MODEL_SIZE))
-        ah = scale_len((r[3] - r[1]) * PDF_TO_PAGE / (page_h / MODEL_SIZE))
+        aw = scale_w((r[2] - r[0]) * PDF_TO_PAGE / (page_w / MODEL_SIZE))
+        ah = scale_h((r[3] - r[1]) * PDF_TO_PAGE / (page_h / MODEL_SIZE))
         if aw * ah >= vector_min_area:
             rects.append((r[0], r[1], r[2], r[3]))
     if not rects:

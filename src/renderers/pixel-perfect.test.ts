@@ -120,7 +120,7 @@ describe("renderPixelPerfectHtml", () => {
     expect(html).toContain('alt="logo"');
   });
 
-  it("skips icon/decor images and tags content images with data-kind", () => {
+  it("renders standalone icons, skips decor, and tags content with data-kind", () => {
     const ir2: DocumentIR = {
       pages: [
         {
@@ -152,9 +152,39 @@ describe("renderPixelPerfectHtml", () => {
       ],
     };
     const out = renderPixelPerfectHtml(ir2);
-    expect(out).not.toContain("icon.png");
+    expect(out).toContain('data-kind="icon"');
+    expect(out).toContain('src="icon.png"');
     expect(out).toContain('data-kind="content"');
     expect(out).toContain('src="logo.png"');
+  });
+
+  it("renders table cell images as an absolute overlay at exact offsets", () => {
+    const ir2: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1448,
+          blocks: [
+            {
+              id: "t1",
+              type: "table",
+              level: 0,
+              text: "",
+              headerRows: [["A", "B"]],
+              rows: [["x", "y"]],
+              cellImages: [
+                { src: "icon.png", left: 46, top: 763.8, width: 17.2, height: 17.2 },
+              ],
+              geometry: { x: 64, y: 251, width: 903, height: 964 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(ir2);
+    expect(out).toContain('class="det-table-imgs"');
+    expect(out).toContain('position:absolute;left:46px;top:764px');
+    expect(out).toContain('src="icon.png"');
   });
 
   it("right-aligns page numbers", () => {
