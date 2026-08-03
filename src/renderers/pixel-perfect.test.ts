@@ -187,6 +187,38 @@ describe("renderPixelPerfectHtml", () => {
     expect(out).toContain('src="icon.png"');
   });
 
+  it("keeps OCR table text at its PDF position via contentOffset", () => {
+    const ir2: DocumentIR = {
+      pages: [
+        {
+          width: 1024,
+          height: 1449,
+          blocks: [
+            {
+              id: "t1",
+              type: "table",
+              level: 0,
+              text: "",
+              headerRows: [["Tree Level", "Description"]],
+              rows: [["1", "Seal"]],
+              contentOffset: { left: -571, top: 827 },
+              cellImages: [
+                { src: "icon.png", left: 3, top: 194, width: 17, height: 17, row: 1, col: 0 },
+              ],
+              geometry: { x: 635, y: 48, width: 248, height: 1305 },
+            },
+          ],
+        },
+      ],
+    };
+    const out = renderPixelPerfectHtml(ir2);
+    expect(out).toContain(
+      '<table style="position:absolute;left:-571px;top:827px;">',
+    );
+    // cell images stay relative to the grid origin, not the content offset
+    expect(out).toContain("position:absolute;left:3px;top:194px");
+  });
+
   it("right-aligns page numbers", () => {
     expect(html).toContain("text-align:right;");
   });

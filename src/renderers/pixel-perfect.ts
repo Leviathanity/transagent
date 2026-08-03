@@ -35,7 +35,12 @@ function tableInnerHtml(t: TableSourceBlock, height: number): string {
   const body = t.rows
     .map((r) => `<tr>${pad(r).map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`)
     .join("");
-  let inner = `<table>${header}${body}</table>`;
+  // When the table geometry is the code-path grid but the OCR text lives in a
+  // sub-region (contentOffset), keep the semantic table at the PDF position.
+  const tablePos = t.contentOffset
+    ? ` style="position:absolute;left:${Math.round(t.contentOffset.left)}px;top:${Math.round(t.contentOffset.top)}px;"`
+    : "";
+  let inner = `<table${tablePos}>${header}${body}</table>`;
 
   const images = t.cellImages ?? [];
   if (images.length > 0) {

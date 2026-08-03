@@ -304,6 +304,41 @@ test1 推演：36 处放置全部 content，块数与现状持平（无回归风
 
 归档：`workdir/ir-e2e-test2-2026-08-02-v3/`（自包含 HTML + README）；HTTP 展示 `http://192.168.2.118:8080/`。
 
+## Phase 14 — 网格/单元格级图标回填（2026-08-03，test2 v5）
+
+**问题**：v3 仍有 81 个独立 icon 块显示在表格外。取证确认图标绝对坐标正确
+（218/218 落在 PDF 矢量网格外框内），但 OCR det table bbox 是"文字包围盒"
+（p1 网格 y=48..1353 vs OCR bbox y=875..1205），回填误用 OCR bbox 当表格区域。
+
+**修复**（计划 `docs/superpowers/plans/2026-08-03-grid-cell-backfill.md`）：
+
+1. `pdf_to_ir.py` 新增代码路径**表格网格提取**（矢量线连通分量 → 外框/行列/单元格），
+   含无 GPU 的 `grids_only` 调试模式；`doc.close()` 移到脚本末尾（原实现中
+   `get_drawings()` 在 close 后必然抛异常，v3 的 vector 提取实际从未执行）；
+2. **OCR 表格 ↔ 网格对齐**：表格 geometry 以网格外框为准，OCR 文字经
+   `contentOffset` 保持在 PDF 真值位置（IR schema 新增 `contentOffset`，
+   渲染器输出内层绝对定位 table）；OCR 漏检时创建 grid-only 表；
+3. **单元格级回填**：图标中心落入 cell → cellImages（新增 row/col）；
+4. **lint 盒模型修正**：`.det-table` 按 contentOffset + CSS max-width 计算真实渲染盒，
+   消除中文表格文字长度估算的溢出误报。
+
+**实测（test2 v5，真实 GPU + DeepSeek 全链路）**：
+
+| 指标 | v3 | v5 |
+|---|---:|---:|
+| cellImages | 113 | **194** |
+| 独立 icon 块 | 81 | **0** |
+| 非 decor 回填率 | 89% | **100%（194/194，全部带 row/col）** |
+| DOM 实测位置偏差 | — | p50 0.54px / max 0.71px（194/194 在表格内） |
+| 转换 lint | 10 | 10（与 v3 完全一致） |
+| 最终 lint | 0 | **0** |
+| 全量单测 | 98 | **101 pass / 0 fail**（新增 contentOffset 渲染、converter 透传、lint 盒模型） |
+
+全链路：translate 61 块 → review（10 lint + 3 grill，106 turns）→ beautify
+（20 near-right + 204 行 CSS）→ interact。CAS/EPDM 原文保留，最终文件自包含。
+
+归档：`workdir/ir-e2e-test2-2026-08-03-v5/`；HTTP 展示 `http://192.168.2.118:8080/`。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。

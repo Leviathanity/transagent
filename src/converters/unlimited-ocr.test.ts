@@ -116,4 +116,30 @@ describe("normalizeOcrPayload", () => {
       throw new Error("expected image block");
     }
   });
+
+  it("passes table contentOffset and cell row/col into the IR", () => {
+    const ir = normalizeOcrPayload({
+      pages: [
+        {
+          width: 1024,
+          height: 1449,
+          blocks: [
+            {
+              type: "table",
+              bbox: [64, 875, 969, 1205],
+              html: "<table><tr><th>A</th></tr></table>",
+              content_offset: { left: -571, top: 827 },
+              table_images: [
+                { src: "icon.png", left: 3, top: 194, width: 17, height: 17, row: 1, col: 0 },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const table = ir.pages[0].blocks[0];
+    if (table.type !== "table") throw new Error("expected table");
+    expect(table.contentOffset).toEqual({ left: -571, top: 827 });
+    expect(table.cellImages?.[0]).toMatchObject({ src: "icon.png", row: 1, col: 0 });
+  });
 });

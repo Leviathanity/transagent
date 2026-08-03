@@ -40,14 +40,6 @@ args = json.loads(sys.argv[2])
 pdf_path = args["pdf_path"]
 output_dir = args.get("output_dir", "")
 
-tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-model = AutoModel.from_pretrained(
-    model_path,
-    trust_remote_code=True,
-    use_safetensors=True,
-    dtype=torch.bfloat16,
-).eval().cuda()
-
 doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 max_pages = args.get("max_pages", len(doc))
@@ -63,6 +55,193 @@ page_w = int(PDF_PT_W * PDF_TO_PAGE)
 page_h = int(PDF_PT_H * PDF_TO_PAGE)
 PAGE_H = int(PAGE_W * (page_h / page_w))
 mat = fitz.Matrix(PDF_TO_PAGE, PDF_TO_PAGE)
+
+grid_line_min_len = args.get("grid_line_min_len", 15)
+grid_tol = args.get("grid_tol", 2.0)
+grid_table_overlap_ratio = args.get("grid_table_overlap_ratio", 0.3)
+
+
+def to_model_x(v):
+    return v * PDF_TO_PAGE / (page_w / MODEL_SIZE)
+
+
+def to_model_y(v):
+    return v * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+
+
+def extract_grids(pi):
+    """Vector-line table grids on a page (PDF pt space).
+
+    The vector grid (outer frame + row/column separators) is the geometric
+    authority for where tables are; OCR det table bboxes only bound the text
+    extent and can be truncated on icon-heavy tables.
+    """
+    hs = []
+    vs = []
+    for d in doc[pi].get_drawings():
+        # Pure fills are shapes (logos/boxes), not grid lines. Stroked paths
+        # ('s'/'fs') carry the actual table borders.
+        if d.get("type") == "f":
+            continue
+        for it in d.get("items", []):
+            if it[0] != "l":
+                continue
+            p1, p2 = it[1], it[2]
+            dx = abs(p2.x - p1.x)
+            dy = abs(p2.y - p1.y)
+            if dy < 0.1 and dx >= grid_line_min_len:
+                hs.append([p1.y, min(p1.x, p2.x), max(p1.x, p2.x)])
+            elif dx < 0.1 and dy >= grid_line_min_len:
+                vs.append([p1.x, min(p1.y, p2.y), max(p1.y, p2.y)])
+
+    def merge(lines):
+        merged = []
+        for c, lo, hi in sorted(lines):
+            if (
+                merged
+                and abs(merged[-1][0] - c) <= grid_tol
+                and lo <= merged[-1][2] + grid_tol
+            ):
+                merged[-1][2] = max(merged[-1][2], hi)
+            else:
+                merged.append([c, lo, hi])
+        return merged
+
+    hs = merge(hs)
+    vs = merge(vs)
+
+    # Union-find: a horizontal and a vertical line belong to one grid when
+    # they cross (within tolerance).
+    n = len(hs) + len(vs)
+    parent = list(range(n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for i, (hy, hx1, hx2) in enumerate(hs):
+        for j, (vx, vy1, vy2) in enumerate(vs):
+            if (
+                hx1 - grid_tol <= vx <= hx2 + grid_tol
+                and vy1 - grid_tol <= hy <= vy2 + grid_tol
+            ):
+                union(i, len(hs) + j)
+
+    comps = {}
+    for idx in range(n):
+        comps.setdefault(find(idx), []).append(idx)
+
+    grids = []
+    for idxs in comps.values():
+        h_idx = [i for i in idxs if i < len(hs)]
+        v_idx = [i - len(hs) for i in idxs if i >= len(hs)]
+        if not h_idx or not v_idx:
+            continue
+        rows = sorted({round(hs[i][0], 2) for i in h_idx})
+        cols = sorted({round(vs[i][0], 2) for i in v_idx})
+        if len(rows) < 2 or len(cols) < 2:
+            continue
+        gx1 = min(hs[i][1] for i in h_idx)
+        gx2 = max(hs[i][2] for i in h_idx)
+        gy1 = min(vs[i][1] for i in v_idx)
+        gy2 = max(vs[i][2] for i in v_idx)
+        gy1 = min(gy1, rows[0])
+        gy2 = max(gy2, rows[-1])
+        gx1 = min(gx1, cols[0])
+        gx2 = max(gx2, cols[-1])
+        if (gx2 - gx1) * (gy2 - gy1) < 100:
+            continue
+        # Per-row columns: only vertical separators spanning that row band
+        # count, so merged cells (missing separators) do not split columns.
+        v_lines = [vs[i] for i in v_idx]
+        row_cols = []
+        for r0, r1 in zip(rows, rows[1:]):
+            cy = (r0 + r1) / 2
+            rc = [vx for (vx, vy1, vy2) in v_lines if vy1 - grid_tol <= cy <= vy2 + grid_tol]
+            rc = sorted({round(x, 2) for x in rc})
+            if len(rc) < 2:
+                rc = [gx1, gx2]
+            row_cols.append(rc)
+        grids.append({
+            "bbox": (gx1, gy1, gx2, gy2),
+            "rows": rows,
+            "cols": cols,
+            "row_cols": row_cols,
+        })
+    return grids
+
+
+def grid_in_model(g):
+    b = g["bbox"]
+    return {
+        "bbox": (
+            to_model_x(b[0]),
+            to_model_y(b[1]),
+            to_model_x(b[2]),
+            to_model_y(b[3]),
+        ),
+        "rows": [to_model_y(y) for y in g["rows"]],
+        "cols": [to_model_x(x) for x in g["cols"]],
+        "row_cols": [[to_model_x(x) for x in rc] for rc in g["row_cols"]],
+    }
+
+
+def cell_at(g, cx, cy, tol):
+    """Return (row, col, cell_bbox) for a point inside a grid, or None."""
+    rows = g["rows"]
+    for r in range(len(rows) - 1):
+        if rows[r] - tol <= cy <= rows[r + 1] + tol:
+            rc = g["row_cols"][r]
+            for c in range(len(rc) - 1):
+                if rc[c] - tol <= cx <= rc[c + 1] + tol:
+                    return (r, c, (rc[c], rows[r], rc[c + 1], rows[r + 1]))
+    return None
+
+
+if args.get("grids_only"):
+    out_pages = []
+    for pi in range(max_pages):
+        grids = extract_grids(pi)
+        out_pages.append({
+            "width": PAGE_W,
+            "height": PAGE_H,
+            "grids": [
+                {
+                    "bbox_pt": [round(x, 2) for x in g["bbox"]],
+                    "bbox": [
+                        round(to_model_x(g["bbox"][0]) / MODEL_SIZE * PAGE_W, 1),
+                        round(to_model_y(g["bbox"][1]) / MODEL_SIZE * PAGE_H, 1),
+                        round(to_model_x(g["bbox"][2]) / MODEL_SIZE * PAGE_W, 1),
+                        round(to_model_y(g["bbox"][3]) / MODEL_SIZE * PAGE_H, 1),
+                    ],
+                    "rows": [round(to_model_y(y) / MODEL_SIZE * PAGE_H, 1) for y in g["rows"]],
+                    "cols": [round(to_model_x(x) / MODEL_SIZE * PAGE_W, 1) for x in g["cols"]],
+                    "row_cols": [
+                        [round(to_model_x(x) / MODEL_SIZE * PAGE_W, 1) for x in rc]
+                        for rc in g["row_cols"]
+                    ],
+                }
+                for g in grids
+            ],
+        })
+    print(json.dumps({"pages": out_pages}, ensure_ascii=False))
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    sys.exit(0)
+
+tok = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+model = AutoModel.from_pretrained(
+    model_path,
+    trust_remote_code=True,
+    use_safetensors=True,
+    dtype=torch.bfloat16,
+).eval().cuda()
 
 images = []
 image_resources = {}  # identity key -> resource (file_name/xref/hash/placements/kind)
@@ -146,7 +325,6 @@ for i in range(max_pages):
                     "color": sp["color"],
                 })
     page_fonts.append(spans)
-doc.close()
 
 # Sequential inference (CUDA + sys.stdout not thread-safe for parallelism)
 ocr_out = args.get("ocr_output_dir") or os.path.join(tmp_dir, "model_out")
@@ -342,12 +520,104 @@ def display_placement(pl):
     }
 
 
+# ── Table grid (code-path geometry authority) ──
+# The vector grid is the source of truth for "where a table is". OCR table
+# bboxes only carry semantics; when matched to a grid they keep their text at
+# the PDF position via content_offset, while the table geometry expands to the
+# real grid (icon rows are no longer "outside the table").
+grid_cell_tol = 8.0 / 1024.0 * MODEL_SIZE
+tol_x = tol_y = 80.0 / 1024.0 * MODEL_SIZE
+
+
+def match_ocr_table_to_grid(ocr_bb, grids):
+    best = None
+    best_score = 0.0
+    ocr_area = (ocr_bb[2] - ocr_bb[0]) * (ocr_bb[3] - ocr_bb[1]) or 1e-9
+    ocr_cx = (ocr_bb[0] + ocr_bb[2]) / 2
+    ocr_cy = (ocr_bb[1] + ocr_bb[3]) / 2
+    for gi, g in enumerate(grids):
+        gb = g["bbox"]
+        if (
+            gb[0] - grid_cell_tol <= ocr_cx <= gb[2] + grid_cell_tol
+            and gb[1] - grid_cell_tol <= ocr_cy <= gb[3] + grid_cell_tol
+        ):
+            return gi
+        # OCR det bboxes are text extents: when the table text sits inside the
+        # grid's vertical span and overlaps it horizontally, the OCR table is
+        # a sub-region of the same grid (icon rows are outside the OCR bbox).
+        if gb[1] - grid_cell_tol <= ocr_cy <= gb[3] + grid_cell_tol:
+            xov = min(gb[2], ocr_bb[2]) - max(gb[0], ocr_bb[0])
+            min_w = min(gb[2] - gb[0], ocr_bb[2] - ocr_bb[0])
+            if xov > 0 and min_w > 0 and xov / min_w >= 0.2:
+                return gi
+        ov = bbox_overlap(gb, ocr_bb)
+        garea = (gb[2] - gb[0]) * (gb[3] - gb[1])
+        score = ov / ocr_area
+        if garea > 0:
+            score = max(score, ov / garea)
+        if score > best_score:
+            best_score = score
+            best = gi
+    if best is not None and best_score >= grid_table_overlap_ratio:
+        return best
+    return None
+
+
 # Build blocks: content -> standalone image blocks (code geometry);
-# icons -> table cellImages (or dropped outside tables); decor -> dropped.
+# icons -> table cellImages by CELL membership; decor -> dropped.
 for pi, page_blocks in enumerate(pages):
+    grids = [grid_in_model(g) for g in extract_grids(pi)]
     tables = [b for b in page_blocks if b.get("type") == "table"]
+    table_grid = [None] * len(tables)
+    grid_table = {}
+    for ti, tb in enumerate(tables):
+        gi = match_ocr_table_to_grid(tb["bbox"], grids)
+        if gi is not None:
+            table_grid[ti] = gi
+            grid_table.setdefault(gi, ti)
+            gb = grids[gi]["bbox"]
+            ocr_ox = scale_w(tb["bbox"][0])
+            ocr_oy = scale_h(tb["bbox"][1])
+            g_ox = scale_w(gb[0])
+            g_oy = scale_h(gb[1])
+            tb["bbox"] = gb
+            tb["content_offset"] = {
+                "left": round(ocr_ox - g_ox, 1),
+                "top": round(ocr_oy - g_oy, 1),
+            }
+    grid_only_ti = {}
     table_imgs = [[] for _ in tables]
     added = []
+
+    def ensure_grid_table(gi):
+        if gi in grid_table:
+            return grid_table[gi]
+        if gi not in grid_only_ti:
+            gb = grids[gi]["bbox"]
+            nt = {
+                "type": "table",
+                "bbox": gb,
+                "content": "<table></table>",
+                "content_offset": {"left": 0, "top": 0},
+                "grid_only": True,
+            }
+            grid_only_ti[gi] = len(tables) + len(grid_only_ti)
+            tables.append(nt)
+            table_imgs.append([])
+            added.append(nt)
+        return grid_only_ti[gi]
+
+    def origin_for(ti):
+        gi = table_grid[ti] if ti < len(table_grid) else None
+        if gi is None:
+            for gk, tv in grid_only_ti.items():
+                if tv == ti:
+                    gi = gk
+                    break
+        if gi is not None:
+            return grids[gi]["bbox"]
+        return tables[ti]["bbox"]
+
     for key, res in image_resources.items():
         for pl in res["placements"]:
             if pl["page"] != pi:
@@ -359,57 +629,55 @@ for pi, page_blocks in enumerate(pages):
             kind = placement_kind(ibb, len(res["placements"]))
             if kind == "decor":
                 continue
-            if kind == "icon":
-                # Code-path membership: icon CENTER inside a table bbox
-                # (with a tolerance band) attaches it to that table; anything
-                # else stays a standalone icon block at its exact position.
-                cx = (ibb[0] + ibb[2]) / 2
-                cy = (ibb[1] + ibb[3]) / 2
-                tol_x = tol_y = 80.0 / 1024.0 * MODEL_SIZE
-                attached = False
-                for ti, tb in enumerate(tables):
-                    tbb = tb["bbox"]
-                    if (
-                        tbb[0] - tol_x <= cx <= tbb[2] + tol_x
-                        and tbb[1] - tol_y <= cy <= tbb[3] + tol_y
-                    ):
-                        table_imgs[ti].append({
-                            "src": res["file_name"],
-                            "left": round((ibb[0] - tbb[0]) / MODEL_SIZE * PAGE_W, 1),
-                            "top": round((ibb[1] - tbb[1]) / MODEL_SIZE * PAGE_H, 1),
-                            "width": round((ibb[2] - ibb[0]) / MODEL_SIZE * PAGE_W, 1),
-                            "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * PAGE_H, 1),
-                        })
-                        attached = True
-                        break
-                if attached:
-                    continue
-                added.append({
-                    "type": "image",
-                    "bbox": ibb,
-                    "content": "",
+            cx = (ibb[0] + ibb[2]) / 2
+            cy = (ibb[1] + ibb[3]) / 2
+            # 1) Code-path grid membership (cell-level when separators exist)
+            gi = None
+            cell = None
+            for g_idx, g in enumerate(grids):
+                gb = g["bbox"]
+                if (
+                    gb[0] - grid_cell_tol <= cx <= gb[2] + grid_cell_tol
+                    and gb[1] - grid_cell_tol <= cy <= gb[3] + grid_cell_tol
+                ):
+                    gi = g_idx
+                    cell = cell_at(g, cx, cy, grid_cell_tol)
+                    break
+            if gi is not None:
+                ti = ensure_grid_table(gi)
+                gb = grids[gi]["bbox"]
+                entry = {
                     "src": res["file_name"],
-                    "img_bbox": ibb,
-                    "identity": {
-                        "xref": res["xref"],
-                        "hash": res["hash"],
-                        "sourceName": res["file_name"],
-                    },
-                    "kind": "icon",
-                    "placements": [display_placement(p) for p in res["placements"]],
-                    "alt": "",
-                })
+                    "left": round((ibb[0] - gb[0]) / MODEL_SIZE * PAGE_W, 1),
+                    "top": round((ibb[1] - gb[1]) / MODEL_SIZE * PAGE_H, 1),
+                    "width": round((ibb[2] - ibb[0]) / MODEL_SIZE * PAGE_W, 1),
+                    "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * PAGE_H, 1),
+                }
+                if cell is not None:
+                    entry["row"] = cell[0]
+                    entry["col"] = cell[1]
+                table_imgs[ti].append(entry)
                 continue
-            # content: inside a table -> cellImage, otherwise standalone block
+            # 2) Fallback: OCR table bbox (tables without vector grids)
             in_table = False
-            for ti, tb in enumerate(tables):
+            for ti2, tb in enumerate(tables):
+                if tb.get("grid_only"):
+                    continue
                 tbb = tb["bbox"]
                 ov = bbox_overlap(tbb, ibb)
-                if ov / ia > table_image_overlap_ratio:
-                    table_imgs[ti].append({
+                if kind == "icon":
+                    attach = (
+                        tbb[0] - tol_x <= cx <= tbb[2] + tol_x
+                        and tbb[1] - tol_y <= cy <= tbb[3] + tol_y
+                    )
+                else:
+                    attach = ov / ia > table_image_overlap_ratio
+                if attach:
+                    origin = origin_for(ti2)
+                    table_imgs[ti2].append({
                         "src": res["file_name"],
-                        "left": round((ibb[0] - tbb[0]) / MODEL_SIZE * PAGE_W, 1),
-                        "top": round((ibb[1] - tbb[1]) / MODEL_SIZE * PAGE_H, 1),
+                        "left": round((ibb[0] - origin[0]) / MODEL_SIZE * PAGE_W, 1),
+                        "top": round((ibb[1] - origin[1]) / MODEL_SIZE * PAGE_H, 1),
                         "width": round((ibb[2] - ibb[0]) / MODEL_SIZE * PAGE_W, 1),
                         "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * PAGE_H, 1),
                     })
@@ -417,6 +685,7 @@ for pi, page_blocks in enumerate(pages):
                     break
             if in_table:
                 continue
+            # 3) Standalone block at exact PDF position
             added.append({
                 "type": "image",
                 "bbox": ibb,
@@ -430,7 +699,7 @@ for pi, page_blocks in enumerate(pages):
                 },
                 "kind": kind,
                 "placements": [display_placement(p) for p in res["placements"]],
-                "alt": placement_alt(ibb, page_blocks),
+                "alt": placement_alt(ibb, page_blocks) if kind == "content" else "",
             })
     for ti, tb in enumerate(tables):
         tb["table_images"] = table_imgs[ti]
@@ -586,6 +855,8 @@ for pi, page_blocks in enumerate(pages):
                 entry["placements"] = b["placements"]
         elif b["type"] == "table":
             entry["html"] = b["content"]
+            if b.get("content_offset"):
+                entry["content_offset"] = b["content_offset"]
             if b.get("table_images"):
                 entry["table_images"] = b["table_images"]
         else:
@@ -593,6 +864,7 @@ for pi, page_blocks in enumerate(pages):
         blocks_out.append(entry)
     out_pages.append({"width": PAGE_W, "height": PAGE_H, "blocks": blocks_out})
 
+doc.close()
 print(json.dumps({"pages": out_pages}, ensure_ascii=False))
 
 import shutil

@@ -25,6 +25,7 @@ export interface OcrBlockPayload {
   alt?: string;
   font?: FontStyle;
   table_images?: CellImageRef[];
+  content_offset?: { left: number; top: number };
   identity?: { xref?: number; hash?: string; sourceName?: string };
   kind?: "content" | "icon" | "decor" | "vector";
   placements?: { page: number; x: number; y: number; width: number; height: number }[];
@@ -99,6 +100,7 @@ export function normalizeOcrPayload(payload: OcrPayload): DocumentIR {
             headerRows: cells.headerRows,
             rows: cells.rows,
             ...(raw.table_images ? { cellImages: raw.table_images } : {}),
+            ...(raw.content_offset ? { contentOffset: raw.content_offset } : {}),
           };
         }
         if (type === "image") {
@@ -161,6 +163,9 @@ export class UnlimitedOCRConverter implements Converter {
       non_white_ratio: cfg.ocr.nonWhiteRatio,
       icon_size_px: cfg.extraction.iconSizePx,
       icon_repeat_min: cfg.extraction.iconRepeatMin,
+      grid_line_min_len: cfg.extraction.gridLineMinLenPt,
+      grid_tol: cfg.extraction.gridTolPt,
+      grid_table_overlap_ratio: cfg.extraction.gridTableOverlapRatio,
       decor_aspect_ratio: cfg.extraction.decorAspectRatio,
       decor_min_dim: cfg.extraction.decorMinDim,
       decor_right_edge_ratio: cfg.extraction.decorRightEdgeRatio,

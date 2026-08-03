@@ -41,6 +41,9 @@ export interface PtlConfig {
     vectorNonWhiteValue: number;
     vectorNonWhiteRatio: number;
     tableImageOverlapRatio: number;
+    gridLineMinLenPt: number;
+    gridTolPt: number;
+    gridTableOverlapRatio: number;
   };
 }
 
@@ -92,6 +95,9 @@ export const DEFAULT_CONFIG: PtlConfig = {
     vectorNonWhiteValue: 235,
     vectorNonWhiteRatio: 0.03,
     tableImageOverlapRatio: 0.5,
+    gridLineMinLenPt: 15,
+    gridTolPt: 2.0,
+    gridTableOverlapRatio: 0.3,
   },
 };
 

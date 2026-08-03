@@ -48,4 +48,17 @@ describe("lintHtml", () => {
     const issues = lintHtml(html);
     expect(issues.some((i) => i.subType === "overflow")).toBe(false);
   });
+
+  it("measures offset table content (contentOffset) with CSS max-width", () => {
+    // Grid table at x=635 with semantic content offset to x=64; the rendered
+    // table is capped at 940px by CSS, so it must not be flagged as overflow.
+    const html = `<div class="page" style="position:relative;width:1024px;height:1449px;">
+<style>.det-table table{max-width:940px;}.det-table[style*="left:90px"] table{max-width:440px;}</style>
+<div class="det-table" style="position:absolute;left:635px;top:48px;"><table style="position:absolute;left:-571px;top:828px;"><tr><td>树级别描述零件/物料编号IMDS ID / 版本数量重量占比（从 - 至）[%]占比（从 - 至）[%]GADSL、SVHC零件标记来源材料应用 [ID]不适用</td></tr></table></div>
+<div class="det-table" style="position:absolute;left:90px;top:597px;"><table><tr><td>名称 [ID]：星宇汽车配件有限公司 [91208]邓白氏编码：-街道/邮政编码：浙江省仙居县</td></tr></table></div>
+</div>`;
+    const issues = lintHtml(html);
+    expect(issues.filter((i) => i.subType === "overflow")).toEqual([]);
+    expect(issues.some((i) => i.subType === "table-content")).toBe(false);
+  });
 });

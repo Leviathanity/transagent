@@ -32,6 +32,9 @@ export interface CellImageRef {
   top: number;
   width: number;
   height: number;
+  /** Cell position inside the code-path table grid (0-based), when known. */
+  row?: number;
+  col?: number;
 }
 
 interface BaseSourceBlock {
@@ -56,6 +59,12 @@ export interface TableSourceBlock extends BaseSourceBlock {
   colWidths?: number[];
   rowHeights?: number[];
   cellImages?: CellImageRef[];
+  /**
+   * Offset of the OCR semantic table content inside the table geometry
+   * (display px). Set when the geometry comes from the code-path vector grid
+   * and the OCR text sits at a sub-region of that grid.
+   */
+  contentOffset?: { left: number; top: number };
 }
 
 export interface ImageSourceBlock extends BaseSourceBlock {

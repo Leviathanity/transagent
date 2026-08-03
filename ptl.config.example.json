@@ -39,6 +39,9 @@
     "vectorMinArea": 5000,
     "vectorNonWhiteValue": 235,
     "vectorNonWhiteRatio": 0.03,
-    "tableImageOverlapRatio": 0.5
+    "tableImageOverlapRatio": 0.5,
+    "gridLineMinLenPt": 15,
+    "gridTolPt": 2,
+    "gridTableOverlapRatio": 0.3
   }
 }

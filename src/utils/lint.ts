@@ -60,6 +60,24 @@ export function lintHtml(
   const { document } = parseHTML(html);
   const pages = [...document.querySelectorAll(".page")] as Element[];
 
+  // Table CSS max-width rules (added by review/beautify): a generic
+  // `.det-table table` cap plus per-position caps selected by the div's left.
+  const styleText = [...document.querySelectorAll("style")]
+    .map((s) => s.textContent || "")
+    .join("\n");
+  const tableMaxByLeft = new Map<number, number>();
+  let tableMax: number | undefined;
+  const tableRuleRe =
+    /\.det-table(?:\[style\*="left:(-?\d+)px"\])?\s*table\s*\{([^}]*)\}/g;
+  for (const m of styleText.matchAll(tableRuleRe)) {
+    const maxW = parseFloat(
+      (m[2].match(/max-width:([\d.]+)px/) || [])[1] ?? "NaN",
+    );
+    if (!Number.isFinite(maxW)) continue;
+    if (m[1] !== undefined) tableMaxByLeft.set(parseFloat(m[1]), maxW);
+    else tableMax = maxW;
+  }
+
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pages[pi];
     const ps = page.getAttribute("style") || "";
@@ -118,7 +136,12 @@ export function lintHtml(
       }
 
       const effW = cls.includes("det-table")
-        ? width || (maxWidth ? Math.min(maxWidth, renderW) : renderW)
+        ? width ||
+          (maxWidth
+            ? Math.min(maxWidth, renderW)
+            : (tableMaxByLeft.get(left) ?? tableMax) !== undefined
+              ? Math.min(tableMaxByLeft.get(left) ?? tableMax!, renderW)
+              : renderW)
         : nowrap && width > 0
           ? Math.max(width, renderW)
           : width || renderW;
@@ -130,7 +153,26 @@ export function lintHtml(
       // Use explicit height for images (their textContent is just alt text)
       const renderH = (height > 0 && etype === "image") ? height : lines * lh;
 
-      boxes.push({ left, top, right: left + effW, bottom: top + renderH, width: effW, text: text.slice(0, 60), cls, fsize: fontSize, nowrap, etype });
+      // Tables whose semantic content is offset inside a code-path grid
+      // (contentOffset) render at the inner table's position, not the div's.
+      let boxLeft = left;
+      let boxTop = top;
+      if (cls.includes("det-table")) {
+        const innerTable = el.querySelector("table");
+        if (innerTable) {
+          const ts = innerTable.getAttribute("style") || "";
+          const tl = parseFloat(
+            (ts.match(/left:(-?[\d.]+)px/) || [])[1] ?? "NaN",
+          );
+          const tt = parseFloat(
+            (ts.match(/top:(-?[\d.]+)px/) || [])[1] ?? "NaN",
+          );
+          if (Number.isFinite(tl)) boxLeft = left + tl;
+          if (Number.isFinite(tt)) boxTop = top + tt;
+        }
+      }
+
+      boxes.push({ left: boxLeft, top: boxTop, right: boxLeft + effW, bottom: boxTop + renderH, width: effW, text: text.slice(0, 60), cls, fsize: fontSize, nowrap, etype });
     }
 
     for (let i = 0; i < boxes.length; i++) {
