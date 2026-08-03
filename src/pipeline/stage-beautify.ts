@@ -1,8 +1,8 @@
 import { readFile, copyFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { lintHtml } from "../utils/lint.js";
 import { loadConfig } from "../utils/config.js";
+import { isRunningInWsl } from "../utils/wsl.js";
 import { execa } from "execa";
 import { parseHTML } from "linkedom";
 import type { StageResult } from "../types/pipeline.js";
@@ -10,7 +10,7 @@ import type { StageResult } from "../types/pipeline.js";
 const CONFIG = loadConfig();
 const WSL_PYTHON = CONFIG.ocr.python;
 
-const insideWsl = existsSync("/proc/sys/fs/binfmt_misc/WSLInterop");
+const insideWsl = isRunningInWsl();
 
 function wslPath(winPath: string): string {
   return winPath

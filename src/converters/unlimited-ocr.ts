@@ -1,7 +1,7 @@
 import { execa } from "execa";
-import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig } from "../utils/config.js";
+import { isRunningInWsl } from "../utils/wsl.js";
 import type { Converter, ConvertOptions } from "./types.js";
 import { parseTableHtml } from "../utils/table-cells.js";
 import type {
@@ -38,14 +38,6 @@ export interface OcrPagePayload {
 
 export interface OcrPayload {
   pages: OcrPagePayload[];
-}
-
-function isRunningInWsl(): boolean {
-  try {
-    return existsSync("/proc/sys/fs/binfmt_misc/WSLInterop");
-  } catch {
-    return false;
-  }
 }
 
 function toWslPath(winPath: string): string {
