@@ -92,3 +92,22 @@ test2（IMDS 报告）双路径提取 v3 中，81 个独立 icon 块全部落在
 - `src/utils/config.ts` / `ptl.config.example.json` — 配置
 - `scripts/diagnose-images.py` — 指标增强（cellImages row/col、standalone 归零验证）
 - 测试与归档：`test/IR_TEST_REPORT.md`、`workdir/ir-e2e-test2-2026-08-03-*/`
+
+## 补充（2026-08-03 晚）— DevTools 最终验证
+
+对最终输出文件用 Chrome DevTools 逐图标实测时发现一个**回归**：
+review/beautify 的 "Structural repair"（`stage-review.ts` /
+`stage-beautify.ts`）把嵌套的绝对定位 div 平铺到 `.page` 根，
+覆盖层 `.det-table-imgs`（absolute，嵌套在 absolute 的 `.det-table` 内）
+被移出后 containing block 改变，194 个图标全部位移。
+
+修复：渲染器把覆盖层改为**静态包装**（`pointer-events:none`，不设
+`position:absolute`），绝对定位 `<img>` 仍以 `.det-table` 为 containing
+block；并新增 `scripts/verify-backfill-dom.ts`（CDP 计算布局 vs IR 期望值
+逐项对拍）作为最终文件回归工具。
+
+新增阶段：
+
+| 阶段 | 任务 | 验证 |
+|---|---|---|
+| P6 | 最终文件 DevTools 验证 + 覆盖层静态化修复 + 全链路重跑 | v6：194/194 匹配 ≤2px、表格内 194/194、最终 lint 7（误报） |

@@ -339,6 +339,29 @@ test1 推演：36 处放置全部 content，块数与现状持平（无回归风
 
 归档：`workdir/ir-e2e-test2-2026-08-03-v5/`；HTTP 展示 `http://192.168.2.118:8080/`。
 
+### Phase 14 补充 — DevTools 实测最终输出（2026-08-03，v6）
+
+用 Chrome DevTools（CDP，`scripts/verify-backfill-dom.ts`）对 **review/beautify
+后的最终文件**逐图标对拍，发现并修复一个回归：
+
+**问题**：review/beautify 的 "Structural repair" 会把"绝对定位 div 嵌套在
+绝对定位 div 内"的元素平铺到 `.page` 根。图标覆盖层 `.det-table-imgs`
+（absolute）嵌套在 `.det-table`（absolute）内，被移出后 containing block
+从表格原点变成页面原点，194 个图标全部位移（第 1 页偏左 635px、上移 48px）。
+v5 的转换/翻译文件正确，最终文件错误；v3 最终文件同样受影响。
+
+**修复**：`pixel-perfect.ts` 将覆盖层改为静态包装（不参与嵌套判定），
+绝对定位 `<img>` 仍以 `.det-table` 为 containing block；重跑
+review（68 turns）→ beautify（23 near-right + 277 行 CSS）→ interact。
+
+**实测（test2v6_interacted.html）**：194/194 图标与 IR/PDF 位置匹配
+（≤2px，p50 0.54px / max 0.71px），194/194 落在网格表格内；
+表格原点偏差 0px、contentOffset 偏差 0.3px；表格外 content 图位置偏差 0px；
+图标可见性经 computed style + 截图像素确认。最终 lint 7（均为盒模型估算误报，
+Chrome 实测无重叠/溢出）。单测 102 pass（新增覆盖层静态断言与 lint 盒模型）。
+
+归档：`workdir/ir-e2e-test2-2026-08-03-v6/`（最终输出）；v5 仅保留中间产物。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。

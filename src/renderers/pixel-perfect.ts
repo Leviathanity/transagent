@@ -47,13 +47,18 @@ function tableInnerHtml(t: TableSourceBlock, height: number): string {
     // Backfill cell images at their exact PDF-relative offsets instead of
     // guessing rows/columns: the overlay keeps icons in place even when the
     // OCR table bbox or row heights are imperfect.
+    //
+    // The wrapper must NOT be position:absolute: review/beautify structurally
+    // repair nested absolute divs by moving them to the .page root, which
+    // would silently change the containing block and shift every icon.
+    // Absolute <img> children keep using .det-table as containing block.
     const overlay = images
       .map(
         (img) =>
           `<img src="${escapeHtml(img.src)}" style="position:absolute;left:${Math.round(img.left)}px;top:${Math.round(img.top)}px;max-width:${Math.round(img.width)}px;height:auto;display:block;z-index:3;pointer-events:none;">`,
       )
       .join("");
-    inner = `${inner}<div class="det-table-imgs" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;">${overlay}</div>`;
+    inner = `${inner}<div class="det-table-imgs" style="pointer-events:none;">${overlay}</div>`;
   }
   return inner;
 }

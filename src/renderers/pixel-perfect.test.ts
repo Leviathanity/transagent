@@ -185,6 +185,10 @@ describe("renderPixelPerfectHtml", () => {
     expect(out).toContain('class="det-table-imgs"');
     expect(out).toContain('position:absolute;left:46px;top:764px');
     expect(out).toContain('src="icon.png"');
+    // The overlay wrapper must stay static: structural repair in
+    // review/beautify flattens nested absolute divs to the page root, which
+    // would change the containing block and shift every icon.
+    expect(out).not.toContain('class="det-table-imgs" style="position:absolute');
   });
 
   it("keeps OCR table text at its PDF position via contentOffset", () => {
