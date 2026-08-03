@@ -362,6 +362,38 @@ Chrome 实测无重叠/溢出）。单测 102 pass（新增覆盖层静态断言
 
 归档：`workdir/ir-e2e-test2-2026-08-03-v6/`（最终输出）；v5 仅保留中间产物。
 
+## Phase 15 — 网格驱动表格（2026-08-03，test2 v8）
+
+**问题**：v6 的图片绝对位置正确，但重构表格是"OCR 内容驱动"的语义表
+（行高=文字高度、22 行 ≠ 网格 10 行、盒偏移 204px），图标相对"当前表格"错位。
+
+**修复**（spec `docs/specs/2026-08-03-grid-driven-table-backfill.md`）：
+
+1. **网格驱动渲染**：重构表格盒 = PDF 网格盒（fixed layout + colgroup +
+   tr 行高 = 网格边界，`box-sizing:border-box`）；
+2. **OCR → 网格映射**：PDF 文本 spans 定位 OCR 单元格 → row/col + colspan，
+   `gridLayout` 存 `srcRow/srcCol` 引用（翻译 headerRows/rows 后自动流入）；
+   两阶段匹配（独特文本锚行 → 短数字按最近 y 消歧）；不匹配文本（`-5` 树级别
+   数字、OCR 错拼）丢弃，真实内容已在页面文本块；
+3. **图标进 td**：`td{position:relative}` + `img{position:absolute}` 相对单元格，
+   colspan 覆盖列也收集；文本 wrapper 用 CSS class 绝对定位（不撑行高、
+   不触发 review 内联 absolute 平铺）；
+4. lint：colspan 列结构 + table×页眉/页码盒重叠豁免。
+
+**实测（test2 v8 全链路）**：
+
+| 指标 | 结果 |
+|---|---:|
+| 重构表格盒 = 网格盒 | 3/3（原点/宽高一致） |
+| 图标在所属 td 内 | 194/194 |
+| 图标绝对位置偏差 | p50 0.86px / max 1.66px，0 个 >2px |
+| 文本映射 | 187/231 项进入网格单元格，抽样位置=网格行（Carbon black→行8、Tree Level→行9） |
+| 最终 lint | 0 |
+| review 结构修复 | 不再破坏图标（td 内 img + class wrapper） |
+| 全量单测 | 105 pass / 0 fail |
+
+归档：`workdir/ir-e2e-test2-2026-08-03-v8/`；HTTP `http://192.168.2.118:8080/`。
+
 ## 附录：表格缺边框问题（2026-07-31 诊断与修复）
 
 **现象**：提取阶段部分表格行内列数不一致（`test1` 8 表中 3 表：`[6,6,5,5,5]`、`[6,5,5]`、`[5,4,5,5]`），缺列即缺边框，且穿透翻译/审查/美化直达最终输出。
