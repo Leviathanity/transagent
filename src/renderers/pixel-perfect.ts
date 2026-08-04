@@ -96,11 +96,22 @@ function renderGridTable(t: TableSourceBlock): string {
                 if (!tx) return "";
                 // Source PDF writes narrow-table cells vertically (rotated
                 // 90°); restore that direction so long substance names fit
-                // their 31px columns instead of wrapping into a mess.
-                const v = it.vertical
-                  ? "writing-mode:vertical-rl;font-size:12px;line-height:0.55;"
-                  : "font-size:12px;line-height:1.35;overflow-wrap:break-word;";
-                return `<div style="${v}">${escapeHtml(tx)}</div>`;
+                // their 31px columns. Multiple vertical texts in one cell are
+                // side-by-side columns in the source (label groups), so they
+                // render as inline-blocks instead of stacking vertically.
+                // When a single vertical text is taller than the row, fall
+                // back to horizontal small text rather than clipping to a
+                // few characters.
+                const rowHpx = rowH;
+                const estH = tx.length * 12 * 0.55;
+                const useV = it.vertical && estH <= rowHpx - 4;
+                if (useV) {
+                  return `<div class="v" style="writing-mode:vertical-rl;font-size:12px;line-height:0.55;">${escapeHtml(tx)}</div>`;
+                }
+                const fs = it.vertical
+                  ? Math.max(7, Math.min(12, Math.floor((rowHpx - 4) / Math.max(1, Math.ceil(tx.length * 7 / (gl.cols[c + colspan] - gl.cols[c] - 8))))))
+                  : 12;
+                return `<div style="font-size:${fs}px;line-height:1.2;overflow-wrap:break-word;">${escapeHtml(tx)}</div>`;
               })
               .join("")}</div>`
           : "";
@@ -231,6 +242,7 @@ body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
 .det-table td,.det-table th{border:1px solid #888;padding:3px 6px;font-size:12px;overflow-wrap:break-word;}
 .det-table th{background:#e8e8e8;font-weight:bold;}
 .det-table td .det-cell-text{position:absolute;left:4px;top:2px;right:4px;pointer-events:none;}
+.det-table td .det-cell-text .v{display:inline-block;vertical-align:top;}
 .det-image img{max-width:100%;height:auto;object-fit:contain;}
 </style>`;
 
