@@ -374,6 +374,12 @@ def build_grid_layout(tb, grid, spans):
         for ci, s in matched.items():
             t = r["texts"][ci]
             bx1, by1, bx2, by2 = s["bbox"]
+            # Rotated/vertical cell text (IMDS narrow columns): a span whose
+            # bbox is tall but narrow is written top-to-bottom, not left-to-
+            # right. Keep the direction so the renderer can restore it.
+            span_w = bx2 - bx1
+            span_h = by2 - by1
+            vertical = span_h > span_w * 1.3 and len(t) > 1
             cy = (by1 + by2) / 2
             gr = None
             for i in range(n):
@@ -405,7 +411,7 @@ def build_grid_layout(tb, grid, spans):
             if cells[gr][c1] is None:
                 cells[gr][c1] = {"items": [], "colspan": colspan}
             entry = cells[gr][c1]
-            entry["items"].append({"srcRow": src, "srcCol": ci})
+            entry["items"].append({"srcRow": src, "srcCol": ci, "vertical": vertical})
             entry["colspan"] = max(entry["colspan"], colspan)
             stats["mapped"] += 1
     stats["coverage"] = stats["mapped"] / stats["total"] if stats["total"] else 0.0

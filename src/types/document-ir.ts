@@ -43,6 +43,8 @@ export interface GridLayoutCellItem {
   srcRow: number;
   /** Column index inside that semantic row. */
   srcCol: number;
+  /** Text is written vertically (rotated 90°) in the source PDF. */
+  vertical?: boolean;
 }
 
 /** A non-empty grid cell: texts mapped from OCR rows + column span. */

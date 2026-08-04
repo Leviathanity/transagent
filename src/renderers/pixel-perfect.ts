@@ -83,21 +83,25 @@ function renderGridTable(t: TableSourceBlock): string {
         for (let cc = c; cc < Math.min(c + colspan, rowCells.length); cc++) {
           imgs.push(...imgsIn(cc));
         }
-        const texts = cell.items
-          .map((it) => allRows[it.srcRow]?.[it.srcCol] ?? "")
-          .filter((tx) => tx.length > 0);
         // The text wrapper is absolutely positioned so it never contributes to
         // the row height: rows stay exactly at their grid boundary height even
         // when a narrow cell forces the text to wrap many lines. The wrapper
         // uses a CSS class (not inline position:absolute) so review/beautify
         // structural repair — which flattens nested inline-absolute divs —
         // cannot move or unwrap it.
-        const textHtml = texts.length
-          ? `<div class="det-cell-text">${texts
-              .map(
-                (tx) =>
-                  `<div style="font-size:12px;line-height:1.35;overflow-wrap:break-word;">${escapeHtml(tx)}</div>`,
-              )
+        const textHtml = cell.items.length
+          ? `<div class="det-cell-text">${cell.items
+              .map((it) => {
+                const tx = allRows[it.srcRow]?.[it.srcCol] ?? "";
+                if (!tx) return "";
+                // Source PDF writes narrow-table cells vertically (rotated
+                // 90°); restore that direction so long substance names fit
+                // their 31px columns instead of wrapping into a mess.
+                const v = it.vertical
+                  ? "writing-mode:vertical-rl;font-size:12px;line-height:0.55;"
+                  : "font-size:12px;line-height:1.35;overflow-wrap:break-word;";
+                return `<div style="${v}">${escapeHtml(tx)}</div>`;
+              })
               .join("")}</div>`
           : "";
         tds += `<td${colspan > 1 ? ` colspan="${colspan}"` : ""} style="box-sizing:border-box;position:relative;width:${Math.round(colW)}px;height:${Math.round(rowH)}px;padding:2px 4px;overflow:hidden;">${textHtml}${imgHtml(imgs, colLeft)}</td>`;

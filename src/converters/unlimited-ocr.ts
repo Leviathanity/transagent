@@ -29,7 +29,7 @@ export interface OcrBlockPayload {
   grid_layout?: {
     rows: number[];
     cols: number[];
-    cells: ({ items: { srcRow: number; srcCol: number }[]; colspan: number } | null)[][];
+    cells: ({ items: { srcRow: number; srcCol: number; vertical?: boolean }[]; colspan: number } | null)[][];
   };
   mapping_stats?: { total: number; mapped: number; unmapped: number; coverage: number };
   identity?: { xref?: number; hash?: string; sourceName?: string };
