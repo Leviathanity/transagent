@@ -44,6 +44,8 @@ export interface PtlConfig {
     gridLineMinLenPt: number;
     gridTolPt: number;
     gridTableOverlapRatio: number;
+    gridMinCoverage: number;
+    gridColspanEps: number;
   };
 }
 
@@ -98,6 +100,8 @@ export const DEFAULT_CONFIG: PtlConfig = {
     gridLineMinLenPt: 15,
     gridTolPt: 2.0,
     gridTableOverlapRatio: 0.3,
+    gridMinCoverage: 0.3,
+    gridColspanEps: 3.0,
   },
 };
 

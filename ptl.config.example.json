@@ -42,6 +42,8 @@
     "tableImageOverlapRatio": 0.5,
     "gridLineMinLenPt": 15,
     "gridTolPt": 2,
-    "gridTableOverlapRatio": 0.3
+    "gridTableOverlapRatio": 0.3,
+    "gridMinCoverage": 0.3,
+    "gridColspanEps": 3
   }
 }

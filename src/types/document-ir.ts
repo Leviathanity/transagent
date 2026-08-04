@@ -67,6 +67,14 @@ export interface GridLayout {
   cells: (GridLayoutCell | null)[][];
 }
 
+/** OCR→grid mapping diagnostics (extraction only, not rendered). */
+export interface GridMappingStats {
+  total: number;
+  mapped: number;
+  unmapped: number;
+  coverage: number;
+}
+
 interface BaseSourceBlock {
   id: string;
   type: SourceBlockType;
@@ -101,6 +109,8 @@ export interface TableSourceBlock extends BaseSourceBlock {
    * backfilled icons land inside the correct cells.
    */
   gridLayout?: GridLayout;
+  /** OCR→grid mapping coverage diagnostics (unmapped texts are not silent). */
+  mappingStats?: GridMappingStats;
 }
 
 export interface ImageSourceBlock extends BaseSourceBlock {

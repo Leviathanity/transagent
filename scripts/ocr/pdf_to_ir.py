@@ -59,6 +59,8 @@ mat = fitz.Matrix(PDF_TO_PAGE, PDF_TO_PAGE)
 grid_line_min_len = args.get("grid_line_min_len", 15)
 grid_tol = args.get("grid_tol", 2.0)
 grid_table_overlap_ratio = args.get("grid_table_overlap_ratio", 0.3)
+grid_min_coverage = args.get("grid_min_coverage", 0.3)
+grid_colspan_eps = args.get("grid_colspan_eps", 3.0)
 
 
 def to_model_x(v):
@@ -281,6 +283,36 @@ def ir_row_index(html_rows):
     return idx
 
 
+def cand_key(s):
+    b = s["bbox"]
+    return (round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1))
+
+
+def cand_score(c, refs):
+    """Distance of a candidate span to the row's already-anchored cells.
+
+    x dominates the score so same-text candidates on one physical row (e.g.
+    IMDS left/right substance groups) resolve by column, not by y alone.
+    """
+    cx = (c["bbox"][0] + c["bbox"][2]) / 2
+    cy = (c["bbox"][1] + c["bbox"][3]) / 2
+    if not refs:
+        return 0.0
+    return min(abs(cx - rx) + abs(cy - ry) * 0.6 for rx, ry in refs)
+
+
+def pick_candidate(cands, refs, used):
+    """Best unused candidate for one OCR cell text."""
+    available = [c for c in cands if cand_key(c) not in used]
+    if not available:
+        return None
+    if len(available) == 1:
+        return available[0]
+    if refs:
+        return min(available, key=lambda c: cand_score(c, refs))
+    return available[0]
+
+
 def build_grid_layout(tb, grid, spans):
     """Map OCR semantic rows/cells into the code-path grid.
 
@@ -288,9 +320,9 @@ def build_grid_layout(tb, grid, spans):
     row/column (with colspan for cells spanning several grid columns). The
     result references semantic rows by their IR index (srcRow/srcCol), so
     translation of headerRows/rows automatically flows into the grid table.
-    Cells whose text cannot be located (OCR hallucination / text outside the
-    grid, e.g. page-1 left-column paragraphs merged into the table) are
-    dropped — their real content already lives in page text blocks.
+    Cells whose text cannot be located are reported in the returned stats
+    (not silently dropped); the caller decides whether the coverage is good
+    enough to enable grid layout or fall back to the semantic table.
     """
     rows = grid["rows"]
     cols = grid["cols"]
@@ -300,44 +332,45 @@ def build_grid_layout(tb, grid, spans):
     html_rows = ocr_html_rows(tb.get("content", ""))
     row_idx = ir_row_index(html_rows)
     ybox = (tb["bbox"][1] - 10, tb["bbox"][3] + 10) if tb.get("bbox") else None
+    used = set()
+    stats = {"total": 0, "mapped": 0, "unmapped": 0}
     for ri, r in enumerate(html_rows):
-        # OCR semantic rows are NOT physical rows (IMDS headers are spread
-        # across the page), so match each cell independently. Distinct texts
-        # anchor the row first; short numbers pick the candidate nearest to
-        # those anchors instead of matching the same number elsewhere.
+        # OCR semantic rows are NOT physical rows (headers are spread across
+        # the page), so each cell is matched independently. Cells with a
+        # unique candidate anchor the row first; ambiguous candidates (same
+        # text appears several times on one physical row, e.g. left/right
+        # substance groups) resolve by the row's anchored x/y references and
+        # by candidate occupancy — a span is only used once.
         matched = {}
-        refs = []
+        refs = []  # (cx, cy) of anchored cells in this OCR row
+        items = []
         for ci, t in enumerate(r["texts"]):
             if not t:
                 continue
             cands = find_cell_candidates(t, spans, ybox=ybox)
             if not cands:
+                stats["unmapped"] += 1
+                stats["total"] += 1
                 continue
-            if len(t) >= 4 or re.search(r"[A-Za-z]", t):
-                if len(cands) > 1 and refs:
-                    cy = [(c["bbox"][1] + c["bbox"][3]) / 2 for c in cands]
-                    best = min(
-                        range(len(cands)),
-                        key=lambda i: min(abs(cy[i] - y) for y in refs),
-                    )
-                    cands = [cands[best]]
-                matched[ci] = cands[0]
-                refs.append((cands[0]["bbox"][1] + cands[0]["bbox"][3]) / 2)
-        for ci, t in enumerate(r["texts"]):
-            if ci in matched or not t:
+            distinctive = len(t) >= 4 or re.search(r"[A-Za-z]", t)
+            items.append((ci, t, cands, distinctive))
+            stats["total"] += 1
+        # Fewer candidates first: unique anchors build the row reference
+        # frame before ambiguous texts compete for the same spans.
+        items.sort(key=lambda x: (len(x[2]), not x[3]))
+        for ci, t, cands, _distinctive in items:
+            best = pick_candidate(cands, refs, used)
+            if best is None:
+                stats["unmapped"] += 1
                 continue
-            cands = find_cell_candidates(t, spans, ybox=ybox)
-            if not cands:
-                continue
-            if len(cands) > 1 and refs:
-                cy = [(c["bbox"][1] + c["bbox"][3]) / 2 for c in cands]
-                best = min(
-                    range(len(cands)),
-                    key=lambda i: min(abs(cy[i] - y) for y in refs),
+            matched[ci] = best
+            used.add(cand_key(best))
+            refs.append(
+                (
+                    (best["bbox"][0] + best["bbox"][2]) / 2,
+                    (best["bbox"][1] + best["bbox"][3]) / 2,
                 )
-                cands = [cands[best]]
-            if cands:
-                matched[ci] = cands[0]
+            )
         for ci, s in matched.items():
             t = r["texts"][ci]
             bx1, by1, bx2, by2 = s["bbox"]
@@ -349,16 +382,22 @@ def build_grid_layout(tb, grid, spans):
                     break
             if gr is None:
                 continue
-            c1 = c2 = None
+            # Column from the span centre; extend colspan only when the span
+            # clearly crosses a column boundary (a few px over the border is
+            # glyph padding, not a merged cell).
+            cx = (bx1 + bx2) / 2
+            c1 = None
             for j in range(m):
-                if cols[j] - 1 <= bx1 <= cols[j + 1] + 1:
+                if cols[j] - 1 <= cx <= cols[j + 1] + 1:
                     c1 = j
-                if cols[j] - 1 <= bx2 <= cols[j + 1] + 1:
-                    c2 = j
-            if c1 is None or c2 is None:
+                    break
+            if c1 is None:
                 continue
-            if c2 < c1:
-                c1, c2 = c2, c1
+            c2 = c1
+            while c2 + 1 < m and bx2 > cols[c2 + 1] + grid_colspan_eps:
+                c2 += 1
+            while c1 > 0 and bx1 < cols[c1] - grid_colspan_eps:
+                c1 -= 1
             colspan = c2 - c1 + 1
             src = row_idx.get(ri)
             if src is None:
@@ -368,11 +407,13 @@ def build_grid_layout(tb, grid, spans):
             entry = cells[gr][c1]
             entry["items"].append({"srcRow": src, "srcCol": ci})
             entry["colspan"] = max(entry["colspan"], colspan)
+            stats["mapped"] += 1
+    stats["coverage"] = stats["mapped"] / stats["total"] if stats["total"] else 0.0
     return {
         "rows": [round(scale_h(v), 1) for v in rows],
         "cols": [round(scale_w(v), 1) for v in cols],
         "cells": cells,
-    }
+    }, stats
 
 
 if args.get("grids_only"):
@@ -881,7 +922,30 @@ for pi, page_blocks in enumerate(pages):
                     break
         if gi is not None:
             spans = page_fonts[pi] if pi < len(page_fonts) else []
-            tb["grid_layout"] = build_grid_layout(tb, grids[gi], spans)
+            if not spans:
+                print(
+                    f"[grid-map] page {pi + 1}: no PDF text layer, "
+                    "semantic-table fallback",
+                    file=sys.stderr,
+                )
+            else:
+                gl, gstats = build_grid_layout(tb, grids[gi], spans)
+                tb["mapping_stats"] = gstats
+                if gstats["coverage"] >= grid_min_coverage:
+                    tb["grid_layout"] = gl
+                    print(
+                        f"[grid-map] page {pi + 1} table: "
+                        f"{gstats['mapped']}/{gstats['total']} cells mapped "
+                        f"({gstats['coverage']:.0%}) -> grid layout",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"[grid-map] page {pi + 1} table: coverage "
+                        f"{gstats['coverage']:.0%} < {grid_min_coverage:.0%}, "
+                        "semantic-table fallback",
+                        file=sys.stderr,
+                    )
     pages[pi] = page_blocks + added
 
 
@@ -1038,6 +1102,8 @@ for pi, page_blocks in enumerate(pages):
                 entry["content_offset"] = b["content_offset"]
             if b.get("grid_layout"):
                 entry["grid_layout"] = b["grid_layout"]
+            if b.get("mapping_stats"):
+                entry["mapping_stats"] = b["mapping_stats"]
             if b.get("table_images"):
                 entry["table_images"] = b["table_images"]
         else:
