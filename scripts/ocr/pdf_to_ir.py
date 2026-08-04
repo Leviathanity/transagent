@@ -231,7 +231,12 @@ def merge_spans(spans):
     y1 = min(s["bbox"][1] for s in spans)
     x2 = max(s["bbox"][2] for s in spans)
     y2 = max(s["bbox"][3] for s in spans)
-    return {"bbox": (x1, y1, x2, y2), "text": " ".join(s["text"] for s in spans)}
+    return {
+        "bbox": (x1, y1, x2, y2),
+        "text": " ".join(s["text"] for s in spans),
+        "merged": len(spans) > 1,
+        "vertical": any(s.get("vertical", False) for s in spans),
+    }
 
 
 def find_cell_candidates(t, spans, ybox=None):
@@ -374,12 +379,10 @@ def build_grid_layout(tb, grid, spans):
         for ci, s in matched.items():
             t = r["texts"][ci]
             bx1, by1, bx2, by2 = s["bbox"]
-            # Rotated/vertical cell text (IMDS narrow columns): a span whose
-            # bbox is tall but narrow is written top-to-bottom, not left-to-
-            # right. Keep the direction so the renderer can restore it.
-            span_w = bx2 - bx1
-            span_h = by2 - by1
-            vertical = span_h > span_w * 1.3 and len(t) > 1
+            # Rotated/vertical cell text (IMDS narrow columns): direction is
+            # detected from character origins in rawdict (same x, moving y),
+            # which also catches short spans like "[g]".
+            vertical = bool(s.get("vertical", False))
             cy = (by1 + by2) / 2
             gr = None
             for i in range(n):
@@ -404,7 +407,9 @@ def build_grid_layout(tb, grid, spans):
                 c2 += 1
             while c1 > 0 and bx1 < cols[c1] - grid_colspan_eps:
                 c1 -= 1
-            colspan = c2 - c1 + 1
+            # Merged spans (OCR glued several source cells together) must not
+            # claim a huge colspan — that would swallow neighbouring columns.
+            colspan = 1 if s.get("merged") else c2 - c1 + 1
             src = row_idx.get(ri)
             if src is None:
                 continue
@@ -516,25 +521,33 @@ for i in range(max_pages):
                 image_resources[key] = res
             res["placements"].append({"page": i, "bbox": (mx1, my1, mx2, my2)})
 
-# PDF text spans with font info (model space) for dual-path styling
+# PDF text spans with font info (model space) for dual-path styling.
+# rawdict gives character origins, used to detect rotated (vertical) text.
 page_fonts = []
 for i in range(max_pages):
     spans = []
-    for b in doc[i].get_text("dict")["blocks"]:
+    for b in doc[i].get_text("rawdict")["blocks"]:
         if b["type"] != 0:
             continue
         for line in b["lines"]:
             for sp in line["spans"]:
-                t = sp["text"].strip()
+                chars = sp.get("chars", [])
+                t = "".join(c["c"] for c in chars).strip()
                 if not t:
                     continue
                 bx1 = sp["bbox"][0] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
                 by1 = sp["bbox"][1] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
                 bx2 = sp["bbox"][2] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
                 by2 = sp["bbox"][3] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+                vertical = False
+                if len(chars) > 1:
+                    x0, y0 = chars[0]["origin"]
+                    x1, y1 = chars[-1]["origin"]
+                    vertical = abs(x1 - x0) < 0.5 and abs(y1 - y0) > 5
                 spans.append({
                     "text": t,
                     "bbox": (bx1, by1, bx2, by2),
+                    "vertical": vertical,
                     "font": sp["font"],
                     "size": sp["size"],
                     "bold": bool(sp["flags"] & 32),
