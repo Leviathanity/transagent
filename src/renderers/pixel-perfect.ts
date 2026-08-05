@@ -27,7 +27,7 @@ function fontStyleCss(b: SourceBlock): string {
  * backfilled icons render INSIDE their owning <td> (so review/beautify style
  * changes can no longer separate icons from their table).
  */
-function renderGridTable(t: TableSourceBlock): string {
+function renderGridTable(t: TableSourceBlock): { html: string; height: number } {
   const gl = t.gridLayout!;
   const ox = gl.cols[0];
   const oy = gl.rows[0];
@@ -48,12 +48,53 @@ function renderGridTable(t: TableSourceBlock): string {
     imagesByCell.set(key, arr);
   }
 
+  let totalH = H;
   const body = gl.cells
     .map((rowCells, r) => {
       const rowH = gl.rows[r + 1] - gl.rows[r];
       const rowTop = gl.rows[r] - oy;
       const imgsIn = (cc: number): CellImageRef[] =>
         imagesByCell.get(`${r}:${cc}`) ?? [];
+      // Rows grow when the fixed grid height cannot fit the mapped text:
+      // long headers wrap and stay fully visible instead of being clipped.
+      let effH = rowH;
+      {
+        let cc = 0;
+        while (cc < rowCells.length) {
+          const cell = rowCells[cc];
+          const colspan = cell
+            ? Math.max(1, Math.min(cell.colspan, rowCells.length - cc))
+            : 1;
+          const colW = gl.cols[Math.min(cc + colspan, gl.cols.length - 1)] - gl.cols[cc];
+          const colLeft = gl.cols[cc] - ox;
+          const imgsE: CellImageRef[] = [];
+          for (let k = cc; k < Math.min(cc + colspan, rowCells.length); k++) {
+            imgsE.push(...imgsIn(k));
+          }
+          const padE = imgsE.length
+            ? Math.max(4, Math.round(Math.max(...imgsE.map((i) => i.left - colLeft + i.width)) + 4))
+            : 4;
+          if (cell) {
+            for (const it of cell.items) {
+              const tx = allRows[it.srcRow]?.[it.srcCol] ?? "";
+              if (!tx) continue;
+              const estV = tx.length * 12 * 0.55;
+              if (it.vertical && estV <= rowH - 4) {
+                effH = Math.max(effH, estV + 4);
+              } else {
+                const availW = Math.max(20, colW - padE - 10);
+                const fs = it.vertical
+                  ? Math.max(7, Math.min(12, Math.floor((rowH - 4) / Math.max(1, Math.ceil(tx.length * 7 / (colW - 8))))))
+                  : 12;
+                const lines = Math.max(1, Math.ceil(maxLineTextWidth(tx, fs, false) / availW));
+                effH = Math.max(effH, lines * fs * 1.2 + 4);
+              }
+            }
+          }
+          cc += colspan;
+        }
+      }
+      totalH += effH - rowH;
       const imgHtml = (imgs: CellImageRef[], colLeft: number): string =>
         imgs
           .map(
@@ -71,7 +112,7 @@ function renderGridTable(t: TableSourceBlock): string {
         const colLeft = gl.cols[c] - ox;
         if (!cell) {
           const imgs = imgsIn(c);
-          tds += `<td style="box-sizing:border-box;position:relative;width:${Math.round(gl.cols[c + 1] - gl.cols[c])}px;height:${Math.round(rowH)}px;">${imgHtml(imgs, colLeft)}</td>`;
+          tds += `<td style="box-sizing:border-box;position:relative;width:${Math.round(gl.cols[c + 1] - gl.cols[c])}px;height:${Math.round(effH)}px;">${imgHtml(imgs, colLeft)}</td>`;
           c++;
           continue;
         }
@@ -89,14 +130,13 @@ function renderGridTable(t: TableSourceBlock): string {
         const iconPadLeft = imgs.length
           ? Math.max(4, Math.round(Math.max(...imgs.map((i) => i.left - colLeft + i.width)) + 4))
           : 4;
-        // The text wrapper is absolutely positioned so it never contributes to
-        // the row height: rows stay exactly at their grid boundary height even
-        // when a narrow cell forces the text to wrap many lines. The wrapper
-        // uses a CSS class (not inline position:absolute) so review/beautify
-        // structural repair — which flattens nested inline-absolute divs —
-        // cannot move or unwrap it.
+        // The text wrapper is in-flow (not absolutely positioned), so the
+        // cell height grows with wrapped long headers and nothing gets
+        // clipped; the grid row height remains a minimum. Icons stay
+        // absolutely positioned at their exact PDF offset and the text
+        // avoids them via margin-left.
         const textHtml = cell.items.length
-          ? `<div class="det-cell-text" style="left:${iconPadLeft}px;">${cell.items
+          ? `<div class="det-cell-text" style="margin-left:${iconPadLeft}px;width:calc(100% - ${iconPadLeft}px);">${cell.items
               .map((it) => {
                 const tx = allRows[it.srcRow]?.[it.srcCol] ?? "";
                 if (!tx) return "";
@@ -121,14 +161,17 @@ function renderGridTable(t: TableSourceBlock): string {
               })
               .join("")}</div>`
           : "";
-        tds += `<td${colspan > 1 ? ` colspan="${colspan}"` : ""} style="box-sizing:border-box;position:relative;width:${Math.round(colW)}px;height:${Math.round(rowH)}px;padding:2px 4px;overflow:hidden;">${textHtml}${imgHtml(imgs, colLeft)}</td>`;
+        tds += `<td${colspan > 1 ? ` colspan="${colspan}"` : ""} style="box-sizing:border-box;position:relative;width:${Math.round(colW)}px;height:${Math.round(effH)}px;padding:2px 4px;overflow:hidden;">${textHtml}${imgHtml(imgs, colLeft)}</td>`;
         c += colspan;
       }
-      return `<tr style="height:${Math.round(rowH)}px;">${tds}</tr>`;
+      return `<tr style="height:${Math.round(effH)}px;">${tds}</tr>`;
     })
     .join("");
 
-  return `<table style="table-layout:fixed;width:${Math.round(W)}px;border-collapse:collapse;">${colgroup}<tbody>${body}</tbody></table>`;
+  return {
+    html: `<table style="table-layout:fixed;width:${Math.round(W)}px;border-collapse:collapse;">${colgroup}<tbody>${body}</tbody></table>`,
+    height: totalH,
+  };
 }
 
 function tableInnerHtml(t: TableSourceBlock, height: number): string {
@@ -192,9 +235,9 @@ function renderBlock(b: SourceBlock): string {
   if (b.type === "table") {
     if (b.gridLayout) {
       const W = b.gridLayout.cols[b.gridLayout.cols.length - 1] - b.gridLayout.cols[0];
-      const H = b.gridLayout.rows[b.gridLayout.rows.length - 1] - b.gridLayout.rows[0];
-      const sty = `position:absolute;left:${g.x}px;top:${g.y}px;width:${Math.round(W)}px;height:${Math.round(H)}px;z-index:1;`;
-      return `<div class="det-table" style="${sty}">${renderGridTable(b)}</div>`;
+      const rendered = renderGridTable(b);
+      const sty = `position:absolute;left:${g.x}px;top:${g.y}px;width:${Math.round(W)}px;height:${Math.round(rendered.height)}px;z-index:1;`;
+      return `<div class="det-table" style="${sty}">${rendered.html}</div>`;
     }
     const sty = `position:absolute;left:${g.x}px;top:${g.y}px;z-index:1;`;
     return `<div class="det-table" style="${sty}">${tableInnerHtml(b, g.height)}</div>`;
@@ -247,7 +290,7 @@ body{margin:0;padding:20px 0;background:#666;font-family:sans-serif;}
 .det-table table{border-collapse:collapse;width:auto;table-layout:fixed;word-wrap:break-word;}
 .det-table td,.det-table th{border:1px solid #888;padding:3px 6px;font-size:12px;overflow-wrap:break-word;}
 .det-table th{background:#e8e8e8;font-weight:bold;}
-.det-table td .det-cell-text{position:absolute;left:4px;top:2px;right:4px;pointer-events:none;}
+.det-table td .det-cell-text{display:inline-block;vertical-align:top;pointer-events:none;}
 .det-table td .det-cell-text .v{display:inline-block;vertical-align:top;}
 .det-image img{max-width:100%;height:auto;object-fit:contain;}
 </style>`;
