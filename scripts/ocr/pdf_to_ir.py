@@ -44,17 +44,50 @@ doc = fitz.open(pdf_path)
 tmp_dir = tempfile.mkdtemp(prefix="ptl_ocr_")
 max_pages = args.get("max_pages", len(doc))
 
-# Compute page dimensions: PDF pt → DPI px → model/display space
-PDF_PT_W = doc[0].rect.width
-PDF_PT_H = doc[0].rect.height
+# Per-page display dimensions and rotation handling. Pages 2+ of IMDS
+# reports are landscape (rotation=90): text coordinates in the PDF are
+# written in the un-rotated space, so every coordinate must be mapped
+# through the page's derotation matrix into display space first.
 dpi = args.get("dpi", 300)
 PDF_TO_PAGE = dpi / 72
 MODEL_SIZE = args.get("model_size", 1024)
 PAGE_W = args.get("page_width", 1024)
-page_w = int(PDF_PT_W * PDF_TO_PAGE)
-page_h = int(PDF_PT_H * PDF_TO_PAGE)
-PAGE_H = int(PAGE_W * (page_h / page_w))
-mat = fitz.Matrix(PDF_TO_PAGE, PDF_TO_PAGE)
+mat = fitz.Matrix(dpi / 72, dpi / 72)
+
+page_meta = []
+for _p in doc:
+    # page.rect already reflects the page rotation (landscape pages are
+    # 842x595), so display space is simply rect dimensions.
+    disp_w_pt = _p.rect.width
+    disp_h_pt = _p.rect.height
+    page_meta.append({
+        "rot": _p.rotation,
+        "disp_w_pt": disp_w_pt,
+        "disp_h_pt": disp_h_pt,
+        "page_h": int(PAGE_W * (disp_h_pt / disp_w_pt)),
+        "rot_m": _p.rotation_matrix,
+    })
+
+current_meta = page_meta[0]
+
+
+def derot_point(meta, x, y):
+    # rotation_matrix maps raw PDF coordinates into display space (the
+    # upright page shown to the reader); derotation_matrix is the inverse.
+    m = meta["rot_m"]
+    return (m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f)
+
+
+def derot_bbox(meta, bb):
+    pts = [
+        derot_point(meta, bb[0], bb[1]),
+        derot_point(meta, bb[2], bb[1]),
+        derot_point(meta, bb[0], bb[3]),
+        derot_point(meta, bb[2], bb[3]),
+    ]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys))
 
 grid_line_min_len = args.get("grid_line_min_len", 15)
 grid_tol = args.get("grid_tol", 2.0)
@@ -64,11 +97,11 @@ grid_colspan_eps = args.get("grid_colspan_eps", 3.0)
 
 
 def to_model_x(v):
-    return v * PDF_TO_PAGE / (page_w / MODEL_SIZE)
+    return v / current_meta["disp_w_pt"] * MODEL_SIZE
 
 
 def to_model_y(v):
-    return v * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+    return v / current_meta["disp_h_pt"] * MODEL_SIZE
 
 
 def extract_grids(pi):
@@ -89,12 +122,14 @@ def extract_grids(pi):
             if it[0] != "l":
                 continue
             p1, p2 = it[1], it[2]
-            dx = abs(p2.x - p1.x)
-            dy = abs(p2.y - p1.y)
+            q1 = derot_point(current_meta, p1.x, p1.y)
+            q2 = derot_point(current_meta, p2.x, p2.y)
+            dx = abs(q2[0] - q1[0])
+            dy = abs(q2[1] - q1[1])
             if dy < 0.1 and dx >= grid_line_min_len:
-                hs.append([p1.y, min(p1.x, p2.x), max(p1.x, p2.x)])
+                hs.append([q1[1], min(q1[0], q2[0]), max(q1[0], q2[0])])
             elif dx < 0.1 and dy >= grid_line_min_len:
-                vs.append([p1.x, min(p1.y, p2.y), max(p1.y, p2.y)])
+                vs.append([q1[0], min(q1[1], q2[1]), max(q1[1], q2[1])])
 
     def merge(lines):
         merged = []
@@ -430,20 +465,21 @@ def build_grid_layout(tb, grid, spans):
 if args.get("grids_only"):
     out_pages = []
     for pi in range(max_pages):
+        current_meta = page_meta[pi]
         grids = extract_grids(pi)
         out_pages.append({
             "width": PAGE_W,
-            "height": PAGE_H,
+            "height": current_meta["page_h"],
             "grids": [
                 {
                     "bbox_pt": [round(x, 2) for x in g["bbox"]],
                     "bbox": [
                         round(to_model_x(g["bbox"][0]) / MODEL_SIZE * PAGE_W, 1),
-                        round(to_model_y(g["bbox"][1]) / MODEL_SIZE * PAGE_H, 1),
+                        round(to_model_y(g["bbox"][1]) / MODEL_SIZE * current_meta["page_h"], 1),
                         round(to_model_x(g["bbox"][2]) / MODEL_SIZE * PAGE_W, 1),
-                        round(to_model_y(g["bbox"][3]) / MODEL_SIZE * PAGE_H, 1),
+                        round(to_model_y(g["bbox"][3]) / MODEL_SIZE * current_meta["page_h"], 1),
                     ],
-                    "rows": [round(to_model_y(y) / MODEL_SIZE * PAGE_H, 1) for y in g["rows"]],
+                    "rows": [round(to_model_y(y) / MODEL_SIZE * current_meta["page_h"], 1) for y in g["rows"]],
                     "cols": [round(to_model_x(x) / MODEL_SIZE * PAGE_W, 1) for x in g["cols"]],
                     "row_cols": [
                         [round(to_model_x(x) / MODEL_SIZE * PAGE_W, 1) for x in rc]
@@ -468,16 +504,17 @@ model = AutoModel.from_pretrained(
 images = []
 image_resources = {}  # identity key -> resource (file_name/xref/hash/placements/kind)
 for i in range(max_pages):
+    current_meta = page_meta[i]
     out = os.path.join(tmp_dir, f"p{i:04d}.png")
     doc[i].get_pixmap(matrix=mat).save(out)
     images.append(out)
     if output_dir:
         for img_info in doc[i].get_image_info(xrefs=True, hashes=True):
-            bbox_pdf = img_info["bbox"]
-            mx1 = bbox_pdf[0] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
-            my1 = bbox_pdf[1] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
-            mx2 = bbox_pdf[2] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
-            my2 = bbox_pdf[3] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+            bbox_pdf = derot_bbox(current_meta, img_info["bbox"])
+            mx1 = to_model_x(bbox_pdf[0])
+            my1 = to_model_y(bbox_pdf[1])
+            mx2 = to_model_x(bbox_pdf[2])
+            my2 = to_model_y(bbox_pdf[3])
             xref = img_info.get("xref")
             ihash = img_info.get("hash")
             if xref is None and ihash is None:
@@ -525,6 +562,7 @@ for i in range(max_pages):
 # rawdict gives character origins, used to detect rotated (vertical) text.
 page_fonts = []
 for i in range(max_pages):
+    current_meta = page_meta[i]
     spans = []
     for b in doc[i].get_text("rawdict")["blocks"]:
         if b["type"] != 0:
@@ -535,14 +573,15 @@ for i in range(max_pages):
                 t = "".join(c["c"] for c in chars).strip()
                 if not t:
                     continue
-                bx1 = sp["bbox"][0] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
-                by1 = sp["bbox"][1] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
-                bx2 = sp["bbox"][2] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
-                by2 = sp["bbox"][3] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+                db = derot_bbox(current_meta, sp["bbox"])
+                bx1 = to_model_x(db[0])
+                by1 = to_model_y(db[1])
+                bx2 = to_model_x(db[2])
+                by2 = to_model_y(db[3])
                 vertical = False
                 if len(chars) > 1:
-                    x0, y0 = chars[0]["origin"]
-                    x1, y1 = chars[-1]["origin"]
+                    x0, y0 = derot_point(current_meta, *chars[0]["origin"])
+                    x1, y1 = derot_point(current_meta, *chars[-1]["origin"])
                     vertical = abs(x1 - x0) < 0.5 and abs(y1 - y0) > 5
                 spans.append({
                     "text": t,
@@ -660,6 +699,7 @@ def fmt_color(c):
 
 # Match OCR blocks to PDF font spans
 for pi, blocks in enumerate(pages):
+    current_meta = page_meta[pi]
     spans = page_fonts[pi] if pi < len(page_fonts) else []
     for b in blocks:
         if b["type"] == "image":
@@ -675,7 +715,7 @@ for pi, blocks in enumerate(pages):
             best = matching[0][1]
             b["font"] = {
                 "family": css_font_name(best["font"]),
-                "size": round(best["size"] * (PAGE_W / PDF_PT_W), 1),
+                "size": round(best["size"] * (PAGE_W / current_meta["disp_w_pt"]), 1),
                 "bold": best["bold"],
                 "italic": best["italic"],
                 "color": fmt_color(best["color"]),
@@ -702,7 +742,7 @@ def scale_w(v):
 
 
 def scale_h(v):
-    return v / MODEL_SIZE * PAGE_H
+    return v / MODEL_SIZE * current_meta["page_h"]
 
 
 def placement_kind(pl_bbox, count):
@@ -796,6 +836,7 @@ def match_ocr_table_to_grid(ocr_bb, grids):
 # Build blocks: content -> standalone image blocks (code geometry);
 # icons -> table cellImages by CELL membership; decor -> dropped.
 for pi, page_blocks in enumerate(pages):
+    current_meta = page_meta[pi]
     grids = [grid_in_model(g) for g in extract_grids(pi)]
     tables = [b for b in page_blocks if b.get("type") == "table"]
     table_grid = [None] * len(tables)
@@ -879,9 +920,9 @@ for pi, page_blocks in enumerate(pages):
                 entry = {
                     "src": res["file_name"],
                     "left": round((ibb[0] - gb[0]) / MODEL_SIZE * PAGE_W, 1),
-                    "top": round((ibb[1] - gb[1]) / MODEL_SIZE * PAGE_H, 1),
+                    "top": round((ibb[1] - gb[1]) / MODEL_SIZE * current_meta["page_h"], 1),
                     "width": round((ibb[2] - ibb[0]) / MODEL_SIZE * PAGE_W, 1),
-                    "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * PAGE_H, 1),
+                    "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * current_meta["page_h"], 1),
                 }
                 if cell is not None:
                     entry["row"] = cell[0]
@@ -907,9 +948,9 @@ for pi, page_blocks in enumerate(pages):
                     table_imgs[ti2].append({
                         "src": res["file_name"],
                         "left": round((ibb[0] - origin[0]) / MODEL_SIZE * PAGE_W, 1),
-                        "top": round((ibb[1] - origin[1]) / MODEL_SIZE * PAGE_H, 1),
+                        "top": round((ibb[1] - origin[1]) / MODEL_SIZE * current_meta["page_h"], 1),
                         "width": round((ibb[2] - ibb[0]) / MODEL_SIZE * PAGE_W, 1),
-                        "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * PAGE_H, 1),
+                        "height": round((ibb[3] - ibb[1]) / MODEL_SIZE * current_meta["page_h"], 1),
                     })
                     in_table = True
                     break
@@ -970,6 +1011,7 @@ for pi, page_blocks in enumerate(pages):
 
 # Vector graphics: filled PDF drawing paths instead of gap raster heuristics
 for pi, page_blocks in enumerate(pages):
+    current_meta = page_meta[pi]
     png_path = os.path.join(tmp_dir, f"p{pi:04d}.png")
     if not os.path.exists(png_path):
         continue
@@ -982,10 +1024,11 @@ for pi, page_blocks in enumerate(pages):
         r = d.get("rect")
         if not r or d.get("type") not in ("f", "fs"):
             continue
-        aw = scale_w((r[2] - r[0]) * PDF_TO_PAGE / (page_w / MODEL_SIZE))
-        ah = scale_h((r[3] - r[1]) * PDF_TO_PAGE / (page_h / MODEL_SIZE))
+        rd = derot_bbox(current_meta, (r.x0, r.y0, r.x1, r.y1))
+        aw = to_model_x(rd[2]) - to_model_x(rd[0])
+        ah = to_model_y(rd[3]) - to_model_y(rd[1])
         if aw * ah >= vector_min_area:
-            rects.append((r[0], r[1], r[2], r[3]))
+            rects.append(rd)
     if not rects:
         continue
     regions = []
@@ -1006,10 +1049,10 @@ for pi, page_blocks in enumerate(pages):
                 max(reg[3], r[3]),
             )
     for reg in regions:
-        mx1 = reg[0] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
-        my1 = reg[1] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
-        mx2 = reg[2] * PDF_TO_PAGE / (page_w / MODEL_SIZE)
-        my2 = reg[3] * PDF_TO_PAGE / (page_h / MODEL_SIZE)
+        mx1 = to_model_x(reg[0])
+        my1 = to_model_y(reg[1])
+        mx2 = to_model_x(reg[2])
+        my2 = to_model_y(reg[3])
         vbbox = (mx1, my1, mx2, my2)
         varea = (mx2 - mx1) * (my2 - my1)
         if varea <= 0:
@@ -1092,6 +1135,7 @@ def scale_coord(c, dim):
 
 out_pages = []
 for pi, page_blocks in enumerate(pages):
+    current_meta = page_meta[pi]
     blocks_out = []
     for b in page_blocks:
         bb = b.get("img_bbox", b["bbox"])
@@ -1099,9 +1143,9 @@ for pi, page_blocks in enumerate(pages):
             "type": b["type"],
             "bbox": [
                 scale_coord(bb[0], PAGE_W),
-                scale_coord(bb[1], PAGE_H),
+                scale_coord(bb[1], current_meta["page_h"]),
                 scale_coord(bb[2], PAGE_W),
-                scale_coord(bb[3], PAGE_H),
+                scale_coord(bb[3], current_meta["page_h"]),
             ],
         }
         if b.get("font"):
@@ -1128,7 +1172,7 @@ for pi, page_blocks in enumerate(pages):
         else:
             entry["text"] = b["content"]
         blocks_out.append(entry)
-    out_pages.append({"width": PAGE_W, "height": PAGE_H, "blocks": blocks_out})
+    out_pages.append({"width": PAGE_W, "height": current_meta["page_h"], "blocks": blocks_out})
 
 doc.close()
 print(json.dumps({"pages": out_pages}, ensure_ascii=False))
