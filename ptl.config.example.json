@@ -7,12 +7,7 @@
     "maxLength": 32768,
     "ngramWindow": 128,
     "dedupThreshold": 15,
-    "fontOverlapRatio": 0.25,
-    "imageOverlapRatio": 0.3,
-    "vectorGapMin": 120,
-    "vectorGapMaxRatio": 0.7,
-    "nonWhiteValue": 235,
-    "nonWhiteRatio": 0.03
+    "fontOverlapRatio": 0.25
   },
   "page": { "width": 1024, "dpi": 300, "modelSize": 1024 },
   "paths": {

@@ -14,13 +14,6 @@ export interface PtlConfig {
     ngramWindow: number;
     dedupThreshold: number;
     fontOverlapRatio: number;
-    imageOverlapRatio: number;
-    vectorGapMin: number;
-    vectorGapMaxRatio: number;
-    tableOverlapRatio: number;
-    tableNearPx: number;
-    nonWhiteValue: number;
-    nonWhiteRatio: number;
   };
   page: { width: number; dpi: number; modelSize: number };
   paths: { workDir: string; reviewSpec: string; beautifySpec: string };
@@ -63,13 +56,6 @@ export const DEFAULT_CONFIG: PtlConfig = {
     ngramWindow: 128,
     dedupThreshold: 15,
     fontOverlapRatio: 0.25,
-    imageOverlapRatio: 0.3,
-    vectorGapMin: 120,
-    vectorGapMaxRatio: 0.7,
-    tableOverlapRatio: 0.3,
-    tableNearPx: 200,
-    nonWhiteValue: 235,
-    nonWhiteRatio: 0.03,
   },
   page: { width: 1024, dpi: 300, modelSize: 1024 },
   paths: {
