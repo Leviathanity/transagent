@@ -83,6 +83,12 @@ function renderGridTable(t: TableSourceBlock): string {
         for (let cc = c; cc < Math.min(c + colspan, rowCells.length); cc++) {
           imgs.push(...imgsIn(cc));
         }
+        // Icons stay at their exact PDF-relative position inside the td, but
+        // the text must auto-avoid them: start the text after the rightmost
+        // icon in this cell so glyphs never overlap the backfilled images.
+        const iconPadLeft = imgs.length
+          ? Math.max(4, Math.round(Math.max(...imgs.map((i) => i.left - colLeft + i.width)) + 4))
+          : 4;
         // The text wrapper is absolutely positioned so it never contributes to
         // the row height: rows stay exactly at their grid boundary height even
         // when a narrow cell forces the text to wrap many lines. The wrapper
@@ -90,7 +96,7 @@ function renderGridTable(t: TableSourceBlock): string {
         // structural repair — which flattens nested inline-absolute divs —
         // cannot move or unwrap it.
         const textHtml = cell.items.length
-          ? `<div class="det-cell-text">${cell.items
+          ? `<div class="det-cell-text" style="left:${iconPadLeft}px;">${cell.items
               .map((it) => {
                 const tx = allRows[it.srcRow]?.[it.srcCol] ?? "";
                 if (!tx) return "";
